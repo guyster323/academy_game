@@ -617,7 +617,8 @@ const player = {
   riding:false, slugCooldown:0
 };
 let score = 0;
-let hiScore = parseInt(localStorage.getItem('cursorSlugHiScore')||'0',10);
+let hiScore = 0;
+try{ hiScore = parseInt(localStorage.getItem('cursorSlugHiScore')||'0',10); }catch(e){ hiScore=0; }
 let shakeTime=0, shakeMag=0;
 let hitstop = 0;
 
@@ -680,6 +681,7 @@ function updatePlayer(){
     player.hitTimer--;
     player.vy += CFG.GRAVITY; player.vy = Math.min(player.vy, CFG.MAX_FALL);
     moveAndCollide(player, 0, player.vy);
+    Input.justDown = {};
     return;
   }
 
@@ -834,6 +836,14 @@ function explodeAt(x,y,radius,dmg){
     if(Math.hypot(en.x-x,en.y-en.hh-y)<radius+en.hw){
       en.hp -= dmg; en.flash=6;
       if(en.hp<=0) killEnemy(en);
+    }
+  }
+  if(boss && boss.active && !boss.dying){
+    const box = { x:boss.x-boss.hw, y:boss.y-boss.hh*2, w:boss.hw*2, h:boss.hh*2 };
+    const closestX = clamp(x, box.x, box.x+box.w);
+    const closestY = clamp(y, box.y, box.y+box.h);
+    if(Math.hypot(x-closestX,y-closestY)<radius && boss.vulnerable){
+      bossTakeDamage(dmg, x, y);
     }
   }
   const hb = playerHitbox();
@@ -1615,6 +1625,7 @@ function loadStage(n){
   camera.x=0; camera.y=0;
 }
 function resetGame(){
+  Input.justDown = {};
   score=0;
   player.lives=3; player.alive=true; player.hitTimer=0; player.invincible=90;
   player.weapon='prompt'; player.ammo=0; player.grenades=10; player.powStreak=0;
@@ -1626,7 +1637,7 @@ function resetGame(){
 }
 function gameOver(){
   scene='GAMEOVER';
-  if(score>hiScore){ hiScore=score; localStorage.setItem('cursorSlugHiScore',String(hiScore)); }
+  if(score>hiScore){ hiScore=score; try{ localStorage.setItem('cursorSlugHiScore',String(hiScore)); }catch(e){} }
   document.getElementById('restartBtn').style.display='block';
 }
 function stageClear(){
@@ -1636,9 +1647,10 @@ function stageClear(){
   stageClearTimer = 180;
 }
 function advanceStage(){
+  Input.justDown = {};
   if(stageNum>=STAGE_COUNT){
     scene='ENDING';
-    if(score>hiScore){ hiScore=score; localStorage.setItem('cursorSlugHiScore',String(hiScore)); }
+    if(score>hiScore){ hiScore=score; try{ localStorage.setItem('cursorSlugHiScore',String(hiScore)); }catch(e){} }
     document.getElementById('restartBtn').style.display='block';
     return;
   }
