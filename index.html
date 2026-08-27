@@ -2178,6 +2178,7 @@ if(DEMO_ON){
     get x(){ return Math.round(player.x); },
     get lives(){ return player.lives; },
     get weapon(){ return player.weapon; },
+    get riding(){ return !!player.riding; },
     get boss(){ return boss ? { active: boss.active, dying: !!boss.dying, hp: Math.round(boss.hp), max: boss.maxHp, type: boss.type } : null; },
     get active(){ return demoActive; }
   };
