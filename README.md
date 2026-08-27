@@ -4,9 +4,13 @@
 
 `CURSOR SLUG`는 커서 오퍼레이터가 되어 화면을 점령한 버그들을 소탕하는 **Metal Slug풍 픽셀 런앤건**입니다. 사막 폐허에서 시작해 메모리 동굴과 커널 요새까지 돌파하고, `nullptr`부터 `HALLUCINATION`까지 이름만 들어도 불길한 디버깅 악몽을 정면으로 상대하세요.
 
-![CURSOR SLUG 타이틀 화면](assets/screenshots/01-title.png)
+## ▶ 지금 바로 플레이하기
 
-> 설치도, 빌드도, 프레임워크도 필요 없습니다. `index.html` 하나를 브라우저에서 열고 바로 출격하면 됩니다.
+**다운로드도, 설치도 필요 없습니다.** 아래 링크만 클릭하면 브라우저에서 바로 게임이 시작됩니다.
+
+### 👉 [**guyster323.github.io/academy_game**](https://guyster323.github.io/academy_game/) 👈
+
+![CURSOR SLUG 타이틀 화면](assets/screenshots/01-title.png)
 
 ## 게임 한눈에 보기
 
@@ -84,6 +88,10 @@
 | `R` | 게임 오버·엔딩 화면에서 재시작 |
 
 ## 실행
+
+가장 쉬운 방법은 위의 **[지금 바로 플레이하기](https://guyster323.github.io/academy_game/)** 링크를 클릭하는 것입니다. 다운로드나 설치가 전혀 필요 없습니다.
+
+### 파일을 직접 받아서 실행하고 싶다면
 
 1. GitHub 저장소에서 `Code` 버튼을 누른 뒤 `Download ZIP`을 선택하고, 다운로드한 ZIP 파일의 압축을 풉니다.
 2. 압축을 푼 폴더에서 `index.html` 파일을 더블클릭합니다.
