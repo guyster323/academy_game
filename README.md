@@ -128,4 +128,12 @@ python -m http.server 8073
 - 픽셀 아트 스프라이트, 카메라 스크롤, 적 AI, 보스 패턴, 탱크 탑승과 무기 보급을 한 파일에 담은 작은 아케이드 실험
 - 브라우저만 있으면 데스크톱에서 바로 실행할 수 있는 가벼운 플레이 경험
 
+## 🎓 Academy
+
+사내 교육 **STEP 3 · PoC 완성** 과제로 진행했습니다. 어트랙트 모드(`?demo=1`)와 자동 트레일러 파이프라인(`scripts/record-trailer.mjs`)이 그 결과물입니다.
+
+[![Academy 스토리 재료](https://img.shields.io/badge/Academy%20스토리%20재료-STEP%203%20PoC-D97757?style=for-the-badge)](https://claude.ai/code/artifact/2f49df96-64ea-437a-9659-10eec49779ba)
+
+> 13교시 스토리 재료(불편했던 장면 · 정한 규칙 · 해보니 어땠나)와 제출 직전 점검 7항목을 한 장에 정리한 아티팩트입니다.
+
 **이제 터미널을 닫고, 커서를 전장에 올려보세요.**
