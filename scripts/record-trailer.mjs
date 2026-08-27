@@ -143,18 +143,19 @@ async function main() {
   const poster = join(OUT, 'poster.png');
   await ff(['-ss', String(M('boss1Start', 30) + 2.2), '-i', webm, '-frames:v', '1', '-vf', 'scale=1280:720', poster]);
 
-  // Fallback teaser GIF (~first 18s of the montage) for clients that don't render
-  // the <video> embed. Two-pass palette; drop a size if it comes out over ~8 MB.
+  // Full-montage GIF for the README — GitHub renders committed MP4s as
+  // octet-stream so <video> embeds won't play inline; a GIF always does.
+  // Two-pass palette; step down a size if it lands over ~9 MB.
   const gif = join(OUT, 'cursor-slug-hero.gif');
   const pal = join(WORK, 'pal.png');
-  for (const [w, fps] of [[480, 10], [440, 10], [420, 9]]) {
+  for (const [w, fps] of [[460, 10], [440, 10], [420, 9], [400, 9]]) {
     const vf = `fps=${fps},scale=${w}:-1:flags=lanczos`;
-    await ff(['-t', '18', '-i', trailer, '-vf', `${vf},palettegen=stats_mode=diff`, pal]);
-    await ff(['-t', '18', '-i', trailer, '-i', pal,
+    await ff(['-i', trailer, '-vf', `${vf},palettegen=stats_mode=diff:max_colors=160`, pal]);
+    await ff(['-i', trailer, '-i', pal,
       '-lavfi', `${vf}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle`, gif]);
     const mb = (await stat(gif)).size / 1048576;
-    console.log(`teaser gif ${w}px ${fps}fps 18s -> ${mb.toFixed(2)} MB`);
-    if (mb <= 8) break;
+    console.log(`montage gif ${w}px ${fps}fps -> ${mb.toFixed(2)} MB`);
+    if (mb <= 9) break;
   }
 
   for (const f of [trailer, gif, poster]) console.log('  \u2713', f, ((await stat(f)).size / 1048576).toFixed(2), 'MB');

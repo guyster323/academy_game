@@ -5,16 +5,13 @@
 `CURSOR SLUG`는 커서 오퍼레이터가 되어 화면을 점령한 버그들을 소탕하는 **Metal Slug풍 픽셀 런앤건**입니다. 사막 폐허에서 시작해 메모리 동굴과 커널 요새까지 돌파하고, `nullptr`부터 `HALLUCINATION`까지 이름만 들어도 불길한 디버깅 악몽을 정면으로 상대하세요.
 
 <p align="center">
-  <video src="https://github.com/guyster323/academy_game/raw/main/assets/trailer/cursor-slug-trailer.mp4"
-         poster="assets/trailer/poster.png" width="760" autoplay loop muted playsinline>
-    <a href="https://guyster323.github.io/academy_game/">
-      <img src="assets/trailer/cursor-slug-hero.gif" width="760" alt="CURSOR SLUG 하이라이트 — 3스테이지·보스전·무기 이펙트·탱크">
-    </a>
-  </video>
+  <a href="https://guyster323.github.io/academy_game/">
+    <img src="assets/trailer/cursor-slug-hero.gif" width="760" alt="CURSOR SLUG 하이라이트 — 3스테이지·보스전·무기 이펙트·탱크">
+  </a>
 </p>
 
 <p align="center">
-  <a href="assets/trailer/cursor-slug-trailer.mp4"><b>▶ 하이라이트 영상 (MP4)</b></a>
+  <a href="https://github.com/guyster323/academy_game/raw/main/assets/trailer/cursor-slug-trailer.mp4"><b>▶ 고화질 MP4</b></a>
   &nbsp;·&nbsp;
   <a href="https://guyster323.github.io/academy_game/?demo=1">브라우저에서 데모 자동 재생 보기</a>
 </p>
