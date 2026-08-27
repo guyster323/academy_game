@@ -1,0 +1,2123 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>CURSOR SLUG</title>
+<style>
+  html,body{margin:0;padding:0;background:#0b0b12;height:100%;overflow:hidden;
+    display:flex;align-items:center;justify-content:center;font-family:monospace;}
+  #game{image-rendering:pixelated;image-rendering:crisp-edges;background:#000;
+    box-shadow:0 0 40px rgba(217,119,87,0.25);cursor:crosshair;
+    width:min(1152px,96vw);aspect-ratio:384/216;}
+  #restartBtn{position:fixed;top:78%;left:50%;transform:translate(-50%,-50%);
+    padding:10px 22px;font-family:monospace;font-size:16px;
+    letter-spacing:2px;background:#D97757;color:#1a1a1a;border:2px solid #fff;
+    cursor:pointer;display:none;z-index:10;}
+  #restartBtn:hover{background:#f08a63;}
+</style>
+</head>
+<body>
+<canvas id="game" width="384" height="216"></canvas>
+<button id="restartBtn">[ RESTART ]</button>
+<script>
+'use strict';
+
+/* ============================= §1 CONFIG ============================= */
+const CFG = {
+  W: 384, H: 216, SCALE: 3,
+  GRAVITY: 0.5, MAX_FALL: 8,
+  MOVE_SPEED: 1.7, JUMP_VEL: -7.4, JUMP_CUT: 0.45,
+  FIXED_DT: 1000/60,
+  GROUND_Y: 190,
+  PLAYER_HB: {w:6,h:12,ox:-3,oy:-11},
+  INVINCIBLE_TIME: 90,
+  HITSTOP_FRAMES: 4
+};
+let LEVEL_WIDTH = 3200;
+
+function clamp(v,lo,hi){ return v<lo?lo:(v>hi?hi:v); }
+function aabbOverlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+function sign(v){ return v>0?1:(v<0?-1:0); }
+
+/* ============================= §2 AUDIO =============================== */
+const Audio_ = { ctx:null, unlocked:false };
+function unlockAudio(){
+  if(Audio_.unlocked) return;
+  try{
+    Audio_.ctx = new (window.AudioContext||window.webkitAudioContext)();
+    Audio_.unlocked = true;
+    startBGM();
+  }catch(e){}
+}
+const BGM_PATTERN = [110,110,165,110,130.8,130.8,146.8,110];
+let bgmStep = 0;
+function startBGM(){
+  if(!Audio_.ctx) return;
+  const tick = ()=>{
+    if(scene==='PLAY' && Audio_.ctx){
+      const freq = BGM_PATTERN[bgmStep%BGM_PATTERN.length];
+      beep(freq, 0.14, 'triangle', 0.045);
+      if(bgmStep%2===0) beep(freq/2, 0.14, 'square', 0.02);
+    }
+    bgmStep++;
+    setTimeout(tick, 180);
+  };
+  tick();
+}
+function beep(freq, dur, type, vol, slideTo){
+  if(!Audio_.ctx) return;
+  const ctx = Audio_.ctx;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, ctx.currentTime);
+  if(slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo), ctx.currentTime+dur);
+  gain.gain.setValueAtTime(vol || 0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime+dur);
+  osc.connect(gain); gain.connect(ctx.destination);
+  osc.start(); osc.stop(ctx.currentTime+dur);
+}
+const SFX = {
+  shoot(){ beep(520,0.06,'square',0.06,300); },
+  jump(){ beep(300,0.12,'square',0.08,500); },
+  hurt(){ beep(180,0.35,'sawtooth',0.15,40); },
+  enemyDie(){ beep(220,0.15,'square',0.1,60); },
+  playerDie(){ beep(140,0.5,'sawtooth',0.18,30); },
+  pickup(){ beep(700,0.09,'square',0.1,1100); },
+  grenadeThrow(){ beep(200,0.08,'square',0.08,120); },
+  explode(){ beep(90,0.4,'sawtooth',0.22,30); },
+  melee(){ beep(900,0.05,'square',0.08,200); },
+  pow(){ beep(500,0.14,'triangle',0.12,900); }
+};
+
+/* ============================= §3 PIXEL ART ============================ */
+function bakeSprite(rows, palette){
+  const h = rows.length, w = rows[0].length;
+  const cv = document.createElement('canvas'); cv.width=w; cv.height=h;
+  const cx = cv.getContext('2d');
+  const img = cx.createImageData(w,h);
+  for(let y=0;y<h;y++){
+    for(let x=0;x<w;x++){
+      const ch = rows[y][x];
+      const col = palette[ch];
+      const i = (y*w+x)*4;
+      if(col){
+        img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255;
+      }
+    }
+  }
+  cx.putImageData(img,0,0);
+  return cv;
+}
+function flipSprite(cv){
+  const o = document.createElement('canvas'); o.width=cv.width; o.height=cv.height;
+  const cx = o.getContext('2d');
+  cx.translate(cv.width,0); cx.scale(-1,1); cx.drawImage(cv,0,0);
+  return o;
+}
+function flashSprite(cv){
+  const o = document.createElement('canvas'); o.width=cv.width; o.height=cv.height;
+  const cx = o.getContext('2d');
+  cx.drawImage(cv,0,0);
+  cx.globalCompositeOperation='source-in';
+  cx.fillStyle='#ffffff';
+  cx.fillRect(0,0,cv.width,cv.height);
+  return o;
+}
+
+const PAL = {
+  cursor: { O:[217,119,87], H:[240,160,120], D:[120,55,35], E:[30,20,15] },
+  npBug:  { B:[210,60,60], H:[240,120,120], D:[80,10,10], E:[20,20,20] },
+  sfBug:  { B:[160,60,200], H:[200,120,230], D:[70,10,90], E:[20,20,20] },
+  ilBug:  { B:[60,180,210], H:[140,220,240], D:[10,80,100], E:[20,20,20] },
+  crate:  { C:[150,110,60], D:[100,70,35], W:[255,220,120] },
+  pow:    { P:[120,200,140], R:[200,190,60], D:[40,60,40] },
+  gate1:  { G:[90,40,110], D:[50,15,65], C:[220,60,90], K:[255,220,120] },
+  slug:   { B:[80,110,130], D:[45,65,80], T:[30,30,35], W:[200,220,230] },
+  stackov:{ B:[220,140,50], H:[250,190,110], D:[110,60,10], E:[20,20,20] },
+  memleak:{ B:[90,200,110], H:[160,240,170], D:[20,90,40], E:[10,10,10] },
+  deprecated:{ B:[130,130,140], H:[180,180,190], D:[60,60,70], E:[220,60,60] },
+  racecond:{ B:[190,60,220], H:[230,140,250], D:[90,10,110], E:[20,20,20] },
+  hydra:  { G:[50,140,90], D:[20,80,50], C:[220,220,80], T:[100,220,150] },
+  halluc: { G:[200,80,180], D:[110,30,100], C:[255,240,150], E:[30,10,30] }
+};
+
+const SPR = {};
+function padRows(rows, w){
+  return rows.map(r => r.length<w ? r + '.'.repeat(w-r.length) : r);
+}
+function buildSprites(){
+  SPR.playerIdle = bakeSprite(padRows([
+    "..OOOO..",
+    ".OHHHOO.",
+    ".OHEEHO.",
+    ".OOOOOO.",
+    "..OOOO..",
+    "..OOOO..",
+    ".OOOOOO.",
+    ".OO..OO.",
+    ".OO..OO.",
+    ".O....O.",
+    ".O....O.",
+    "OO....OO"
+  ],8), PAL.cursor);
+  SPR.playerCrouch = bakeSprite(padRows([
+    "..OOOO..",
+    ".OHEEHO.",
+    ".OOOOOO.",
+    ".OOOOOO.",
+    ".OO..OO.",
+    "OO....OO"
+  ],8), PAL.cursor);
+  SPR.playerJump = bakeSprite(padRows([
+    "..OOOO..",
+    ".OHHHOO.",
+    ".OHEEHO.",
+    ".OOOOOO.",
+    "..OOOO..",
+    "..OOOO..",
+    ".OOOOOO.",
+    "OO....OO",
+    "O......O",
+    "........",
+    "........",
+    "........"
+  ],8), PAL.cursor);
+
+  const runFrames = [
+    [".OO...O.",".O....O.","O.....O.","O.....O."],
+    [".O.OO.O.",".O....O.",".O.....O",".O.....O"],
+    [".O...OO.",".O....O.",".O.....O",".O.....O"],
+    [".O.OO.O.",".O....O.","O..OO..O","O......O"]
+  ];
+  SPR.playerRun = runFrames.map(legRows => bakeSprite(padRows([
+    "..OOOO..",
+    ".OHHHOO.",
+    ".OHEEHO.",
+    ".OOOOOO.",
+    "..OOOO..",
+    "..OOOO..",
+    ".OOOOOO.",
+    legRows[0], legRows[1], legRows[2], legRows[3]
+  ],8), PAL.cursor));
+
+  SPR.playerFlash = flashSprite(SPR.playerIdle);
+  SPR.playerFlashL = flipSprite(SPR.playerFlash);
+  SPR.playerIdleL = flipSprite(SPR.playerIdle);
+  SPR.playerCrouchL = flipSprite(SPR.playerCrouch);
+  SPR.playerJumpL = flipSprite(SPR.playerJump);
+  SPR.playerRunL = SPR.playerRun.map(flipSprite);
+
+  const gunRows = {
+    E:  padRows(["....","OOO."],4),
+    NE: padRows([".OO","OO.."],4),
+    N:  padRows([".O.","OO.","..."],4),
+    NW: padRows(["OO.",".OO"],4),
+    W:  padRows([".OOO"],4),
+    SW: padRows(["OO..",".OO."],4),
+    S:  padRows(["..O",".O.","O.."],4),
+    SE: padRows(["..OO","OO.."],4)
+  };
+  const gunPal = { O:[40,40,45] };
+  SPR.gun = {};
+  for(const k in gunRows) SPR.gun[k] = bakeSprite(gunRows[k], gunPal);
+
+  SPR.npBug = bakeSprite([
+    "..BBBB..",
+    ".BHHHHB.",
+    ".BEBBED.",
+    "..BBBB..",
+    ".B.BB.B.",
+    "B.BBBB.B",
+    "..B..B.."
+  ], PAL.npBug);
+  SPR.npBugL = flipSprite(SPR.npBug);
+  SPR.npBugFlash = flashSprite(SPR.npBug);
+
+  SPR.sfBug = bakeSprite([
+    "..BBBB..",
+    ".BHHHHB.",
+    ".BEBBED.",
+    "BBBBBBBB",
+    "..B..B.."
+  ], PAL.sfBug);
+  SPR.sfBugL = flipSprite(SPR.sfBug);
+  SPR.sfBugFlash = flashSprite(SPR.sfBug);
+
+  SPR.ilBug = bakeSprite([
+    ".B.BB.B.",
+    "BBBBBBBB",
+    "BHEBBEHB",
+    "BBBBBBBB",
+    ".B.BB.B."
+  ], PAL.ilBug);
+  SPR.ilBugFlash = flashSprite(SPR.ilBug);
+
+  SPR.crate = bakeSprite([
+    "CCCCCCCC",
+    "CDDDDDDC",
+    "CD.WW.DC",
+    "CD.WW.DC",
+    "CDDDDDDC",
+    "CCCCCCCC"
+  ], PAL.crate);
+  SPR.crateFlash = flashSprite(SPR.crate);
+
+  SPR.pow = bakeSprite(padRows([
+    "..PPPP..",
+    ".PDPPDP.",
+    ".PPPPPP.",
+    "..PPPP..",
+    ".RPPPPR.",
+    ".RPPPPR.",
+    ".R....R.",
+    ".R....R."
+  ],8), PAL.pow);
+
+  const gateRows = [
+    "GGGGGGGGGGGGGGGGGGGGGG",
+    "GDDDDDDDDDDDDDDDDDDDDG",
+    "GD..................DG",
+    "GD...GGGGGGGGGGGG...DG",
+    "GD...GCCCCCCCCCCG...DG",
+    "GD...GCC.KKKK.CCG...DG",
+    "GD...GCC.KKKK.CCG...DG",
+    "GD...GCCCCCCCCCCG...DG",
+    "GD...GGGGGGGGGGGG...DG",
+    "GD..................DG",
+    "GDDDDDDDDDDDDDDDDDDDDG",
+    "GG.GG.GG.GG.GG.GG.GGGG"
+  ];
+  SPR.gate1 = bakeSprite(gateRows, PAL.gate1);
+  SPR.gate1Flash = flashSprite(SPR.gate1);
+  const gateRowsArmored = gateRows.map(r=>r.replace(/K/g,'D'));
+  SPR.gate1Armored = bakeSprite(gateRowsArmored, PAL.gate1);
+
+  const hydraRows = [
+    "..G....G....G..",
+    ".GGG..GGG..GGG.",
+    "GGDGGGGDGGGGDGG",
+    "GGGGGGGGGGGGGGG",
+    "GTGGGGGGGGGGGTG",
+    "GGGGGGCCCCGGGGG",
+    "GGGGGCCKKCCGGGG",
+    "GGGGGCCKKCCGGGG",
+    "GGGGGGCCCCGGGGG",
+    "TGGGGGGGGGGGGGT"
+  ];
+  SPR.hydra = bakeSprite(hydraRows.map(r=>r.replace(/K/g,'K')), PAL.hydra);
+  SPR.hydraFlash = flashSprite(SPR.hydra);
+  SPR.hydraArmored = bakeSprite(hydraRows.map(r=>r.replace(/K/g,'C')), PAL.hydra);
+
+  const hallucRows = [
+    "..EGGGGGGGGGE..",
+    ".EGGGGGGGGGGGE.",
+    "EGGCC.GGGG.CCGE",
+    "EGGCC.GGGG.CCGE",
+    "EGGGGGGGGGGGGGE",
+    "EGGG.GGGGG.GGGE",
+    "EGGGDDGGDDGGGGE",
+    ".EGGGGGGGGGGE..",
+    "..EEEEEEEEEE..."
+  ];
+  SPR.halluc = bakeSprite(hallucRows, PAL.halluc);
+  SPR.hallucFlash = flashSprite(SPR.halluc);
+  SPR.hallucDecoy = (function(){
+    const o=document.createElement('canvas'); o.width=SPR.halluc.width; o.height=SPR.halluc.height;
+    const cx=o.getContext('2d'); cx.globalAlpha=0.75; cx.drawImage(SPR.halluc,0,0); return o;
+  })();
+
+  SPR.stackov = bakeSprite([
+    "..BBBB..",
+    ".BHHHHB.",
+    ".BEBBED.",
+    "..BBBB..",
+    ".BB.BB..",
+    "B.B.B.B.",
+    "..B..B.."
+  ], PAL.stackov);
+  SPR.stackovL = flipSprite(SPR.stackov);
+  SPR.stackovFlash = flashSprite(SPR.stackov);
+
+  SPR.memleak = bakeSprite([
+    ".BBBBBB.",
+    "BHBBBBHB",
+    "BEBBBBEB",
+    "BBBBBBBB",
+    ".BBBBBB."
+  ], PAL.memleak);
+  SPR.memleakL = flipSprite(SPR.memleak);
+  SPR.memleakFlash = flashSprite(SPR.memleak);
+
+  SPR.deprecated = bakeSprite([
+    "BBBBBBBBBB",
+    "BHHHHHHHHB",
+    "BH.EBBE.HB",
+    "BHHHHHHHHB",
+    "BBDD..DDBB",
+    "BB.D..D.BB"
+  ], PAL.deprecated);
+  SPR.deprecatedFlash = flashSprite(SPR.deprecated);
+
+  SPR.racecond = bakeSprite([
+    "..BBBB..",
+    ".BHHHHB.",
+    ".BEBBED.",
+    "BBBBBBBB",
+    "B.B..B.B",
+    "..B..B.."
+  ], PAL.racecond);
+  SPR.racecondL = flipSprite(SPR.racecond);
+  SPR.racecondFlash = flashSprite(SPR.racecond);
+
+  SPR.slug = bakeSprite([
+    "....BBBBBBBB....",
+    "...BWWWWWWWWB...",
+    "..BBBBBBBBBBBB..",
+    ".BBDDDDDDDDDDBB.",
+    "BBBBBBBBBBBBBBBB",
+    "TT.TT.TT.TT.TT.T"
+  ], PAL.slug);
+  SPR.slugFlash = flashSprite(SPR.slug);
+}
+
+/* ============================= §4 INPUT ================================ */
+const Input = {
+  keys: {}, justDown: {},
+  mouseX:0, mouseY:0, mouseDown:false, mouseRightDown:false, mouseRightJustDown:false,
+  aimMode: 'keyboard'
+};
+const ONBOARDING_STORAGE_KEY = 'cursorSlugOnboarding:v1';
+const onboarding = { active:false, queue:[], current:null, seen:new Set() };
+try{
+  const saved = JSON.parse(localStorage.getItem(ONBOARDING_STORAGE_KEY)||'[]');
+  if(Array.isArray(saved)) saved.forEach(key_=>onboarding.seen.add(key_));
+}catch(e){}
+const ONBOARDING_EVENTS = {
+  controls: {
+    kicker:'FIELD MANUAL // FIRST RUN', title:'기본 조작을 익혀보세요',
+    body:'커서 오퍼레이터는 빠르게 움직이며 방향키로 조준할 수 있습니다.',
+    rows:[['ARROWS','이동 · ↓ 웅크리기'],['Z / SPACE','점프'],['X / 마우스 왼쪽','사격 · 가까우면 근접'],['C / 우클릭','수류탄']],
+    hint:'Z / ENTER / 클릭으로 닫기'
+  },
+  tank: {
+    kicker:'FIELD MANUAL // TANK', title:'TANK를 확보했습니다',
+    body:'가까이 다가가면 자동으로 탑승합니다. 장갑이 적의 충돌을 버텨줍니다.',
+    rows:[['X / 마우스 왼쪽','포탄 발사'],['# # #','남은 내구도'],['↓ + Z / SPACE','하차 (TANK는 점프하지 않음)']],
+    hint:'하차 후 다시 점프할 수 있습니다'
+  },
+  grenade: {
+    kicker:'FIELD MANUAL // ORDNANCE', title:'수류탄을 사용할 수 있습니다',
+    body:'수류탄은 포물선으로 날아가 넓은 범위에 큰 피해를 줍니다.',
+    rows:[['C / 우클릭','수류탄 투척'],['방향키 위','높게 던지기'],['SIGKILL','보유 수량은 HUD에서 확인']],
+    hint:'Z / ENTER / 클릭으로 닫기'
+  },
+  pow: {
+    kicker:'FIELD MANUAL // RESCUE', title:'POW를 발견했습니다',
+    body:'포로에게 닿거나 가까이서 X를 누르면 구출됩니다. 연속 구출은 보너스를 키웁니다.',
+    rows:[['접촉','자동 구출'],['X','근처 포로 구출'],['보상','무기 · 수류탄 · 점수']],
+    hint:'Z / ENTER / 클릭으로 닫기'
+  },
+  'boss-1': {
+    kicker:'FIELD MANUAL // STAGE 1', title:'NULL POINTER GATE 출현',
+    body:'보스전이 시작됩니다. 붉은 코어가 열릴 때 공격하고, 탄환의 궤적을 점프로 피하세요.',
+    rows:[['약점','붉은 코어가 빛날 때'],['경고','회색 갑주는 무적'],['안전 지점','아레나 왼쪽에서 재시작']],
+    hint:'Z / ENTER / 클릭으로 전투 시작'
+  },
+  'boss-2': {
+    kicker:'FIELD MANUAL // STAGE 2', title:'MEMORY LEAK HYDRA 출현',
+    body:'세 갈래 탄환과 수직 탄막을 번갈아 사용합니다. 중앙을 오래 점유하지 마세요.',
+    rows:[['약점','청록 코어'],['패턴','세 갈래 · 수직 탄막'],['팁','짧게 이동하며 빈틈에 사격']],
+    hint:'Z / ENTER / 클릭으로 전투 시작'
+  },
+  'boss-3': {
+    kicker:'FIELD MANUAL // STAGE 3', title:'HALLUCINATION 출현',
+    body:'진짜 본체는 밝은 중심체입니다. 돌진이 끝나고 안정화될 때 집중 사격하세요.',
+    rows:[['약점','밝은 중심체'],['주의','분신은 피해를 주지 않음'],['팁','돌진 중에는 회피 우선']],
+    hint:'Z / ENTER / 클릭으로 전투 시작'
+  }
+};
+for(const key_ of ['H','S','R','F','L']){
+  const weaponNames = {H:'TOKEN STREAM',S:'GREP SHOT',R:'REFACTOR ROCKET',F:'STACKTRACE FLAME',L:'--verbose LASER'};
+  const details = {
+    H:['빠른 자동 사격','X / 마우스 왼쪽','탄막을 만들기 좋습니다'],
+    S:['5발 산탄','X / 마우스 왼쪽','가까운 적에게 강합니다'],
+    R:['폭발 로켓','X / 마우스 왼쪽','범위 피해를 줍니다'],
+    F:['관통 화염','X / 마우스 왼쪽','여러 적을 관통합니다'],
+    L:['관통 레이저','X / 마우스 왼쪽','빠르고 강한 직선 공격입니다']
+  }[key_];
+  ONBOARDING_EVENTS['weapon-'+key_] = {
+    kicker:'FIELD MANUAL // WEAPON '+key_, title:weaponNames[key_]+' 획득',
+    body:'새 무기는 탄약이 있는 동안 사용할 수 있습니다. 탄약이 떨어지면 PROMPT로 돌아갑니다.',
+    rows:[['효과',details[0]],['사용',details[1]],['전술',details[2]]],
+    hint:'Z / ENTER / 클릭으로 닫기'
+  };
+}
+function showNextOnboarding(){
+  if(onboarding.active || onboarding.queue.length===0) return;
+  onboarding.current = ONBOARDING_EVENTS[onboarding.queue.shift()];
+  onboarding.active = !!onboarding.current;
+}
+function queueOnboarding(key_){
+  if(!ONBOARDING_EVENTS[key_] || onboarding.seen.has(key_) || onboarding.queue.indexOf(key_)!==-1) return;
+  if(onboarding.current && onboarding.current===ONBOARDING_EVENTS[key_]) return;
+  onboarding.queue.push(key_);
+  showNextOnboarding();
+}
+function dismissOnboarding(){
+  if(!onboarding.active || !onboarding.current) return;
+  const key_ = Object.keys(ONBOARDING_EVENTS).find(k=>ONBOARDING_EVENTS[k]===onboarding.current);
+  if(key_){
+    onboarding.seen.add(key_);
+    try{ localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify([...onboarding.seen])); }catch(e){}
+  }
+  onboarding.active=false; onboarding.current=null;
+  showNextOnboarding();
+}
+window.addEventListener('keydown', e=>{
+  if(!Input.keys[e.code]) Input.justDown[e.code]=true;
+  Input.keys[e.code]=true;
+  if(onboarding.active){
+    if(['Enter','KeyZ','Space'].indexOf(e.code)!==-1){
+      dismissOnboarding();
+      Input.justDown = {};
+      e.preventDefault();
+    }
+    return;
+  }
+  if(e.code==='ArrowUp'||e.code==='ArrowDown') Input.aimMode='keyboard';
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].indexOf(e.code)!==-1) e.preventDefault();
+  unlockAudio();
+});
+window.addEventListener('keyup', e=>{ Input.keys[e.code]=false; });
+const canvas = document.getElementById('game');
+canvas.addEventListener('mousemove', e=>{
+  const r = canvas.getBoundingClientRect();
+  Input.mouseX = (e.clientX-r.left) * (CFG.W/r.width);
+  Input.mouseY = (e.clientY-r.top) * (CFG.H/r.height);
+  Input.aimMode = 'mouse';
+});
+canvas.addEventListener('mousedown', e=>{
+  unlockAudio();
+  if(e.button===0) Input.mouseDown=true;
+  if(e.button===2){ if(!Input.mouseRightDown) Input.mouseRightJustDown=true; Input.mouseRightDown=true; }
+});
+window.addEventListener('mouseup', e=>{
+  if(e.button===0) Input.mouseDown=false;
+  if(e.button===2) Input.mouseRightDown=false;
+});
+canvas.addEventListener('contextmenu', e=>e.preventDefault());
+canvas.addEventListener('click', ()=>{
+  unlockAudio();
+  if(onboarding.active){ dismissOnboarding(); return; }
+  if(scene==='TITLE') resetGame();
+  else if(scene==='STAGECLEAR' && stageClearTimer<=0) advanceStage();
+  else if(scene==='ENDING'){ resetGame(); }
+});
+
+function key(){ for(let i=0;i<arguments.length;i++) if(Input.keys[arguments[i]]) return true; return false; }
+function keyDown(){ for(let i=0;i<arguments.length;i++) if(Input.justDown[arguments[i]]) return true; return false; }
+
+/* ============================= §5 POOLS ================================= */
+function makePool(n, factory){
+  const arr = [];
+  for(let i=0;i<n;i++){ const o=factory(); o.active=false; arr.push(o); }
+  return arr;
+}
+function spawnFrom(pool, init){
+  for(const o of pool){ if(!o.active){ o.active=true; init(o); return o; } }
+  return null;
+}
+const bullets = makePool(64, ()=>({x:0,y:0,vx:0,vy:0,dmg:1,life:0}));
+const enemyBullets = makePool(48, ()=>({x:0,y:0,vx:0,vy:0,life:0}));
+const particles = makePool(160, ()=>({x:0,y:0,vx:0,vy:0,life:0,maxLife:0,color:'#fff',size:2}));
+const popups = makePool(24, ()=>({x:0,y:0,text:'',life:0,vy:0}));
+const combatBursts = [];
+function spawnCombatBurst(x,y,kind,dx=1,dy=0){
+  combatBursts.push({x,y,kind,dx,dy,life:kind==='explosion'?26:kind==='tank-muzzle'?9:7,maxLife:kind==='explosion'?26:kind==='tank-muzzle'?9:7});
+}
+
+function spawnParticles(x,y,color,count){
+  for(let i=0;i<count;i++){
+    spawnFrom(particles, p=>{
+      p.x=x; p.y=y;
+      const a = Math.random()*Math.PI*2, s = 0.5+Math.random()*2.2;
+      p.vx = Math.cos(a)*s; p.vy = Math.sin(a)*s-1;
+      p.life = p.maxLife = 20+Math.random()*15;
+      p.color = color; p.size = 1+Math.random()*2;
+    });
+  }
+}
+function spawnPopup(x,y,text){
+  spawnFrom(popups, p=>{ p.x=x; p.y=y; p.text=text; p.life=50; p.vy=-0.4; });
+}
+
+/* ============================= §6 TERRAIN / CAMERA ======================= */
+let terrain = [];
+let conveyors = [];
+const camera = { x:0, y:0, locked:false, lockX:0 };
+let shaftZone = null;
+function updateCamera(){
+  if(camera.locked){
+    camera.x += (camera.lockX-camera.x)*0.1;
+    camera.x = clamp(camera.x, 0, Math.max(0, LEVEL_WIDTH-CFG.W));
+    return;
+  }
+  const targetX = clamp(player.x - CFG.W*0.42, 0, LEVEL_WIDTH-CFG.W);
+  camera.x += (targetX-camera.x)*0.14;
+  camera.x = clamp(camera.x, 0, LEVEL_WIDTH-CFG.W);
+  let targetY = 0;
+  if(shaftZone && player.x>shaftZone.x1 && player.x<shaftZone.x2){
+    targetY = clamp(player.y - CFG.H*0.5, shaftZone.minY, shaftZone.maxY);
+  }
+  camera.y += (targetY-camera.y)*0.12;
+}
+
+function moveAndCollide(e, dx, dy){
+  e.onGround = false;
+  e.x += dx;
+  let box = { x:e.x+CFG.PLAYER_HB.ox, y:e.y+CFG.PLAYER_HB.oy, w:CFG.PLAYER_HB.w, h:CFG.PLAYER_HB.h };
+  for(const t of terrain){
+    if(aabbOverlap(box,t)){
+      if(dx>0) e.x = t.x - CFG.PLAYER_HB.w - CFG.PLAYER_HB.ox;
+      else if(dx<0) e.x = t.x + t.w - CFG.PLAYER_HB.ox;
+      box.x = e.x+CFG.PLAYER_HB.ox;
+    }
+  }
+  e.y += dy;
+  box = { x:e.x+CFG.PLAYER_HB.ox, y:e.y+CFG.PLAYER_HB.oy, w:CFG.PLAYER_HB.w, h:CFG.PLAYER_HB.h };
+  for(const t of terrain){
+    if(aabbOverlap(box,t)){
+      if(dy>0){ e.y = t.y - (CFG.PLAYER_HB.oy+CFG.PLAYER_HB.h); e.vy=0; e.onGround=true; }
+      else if(dy<0){ e.y = t.y+t.h - CFG.PLAYER_HB.oy; e.vy=0; }
+      box.y = e.y+CFG.PLAYER_HB.oy;
+    }
+  }
+}
+
+/* ============================= §7 WEAPONS ================================= */
+const WEAPONS = {
+  prompt:  { code:'',  name:'PROMPT',            infinite:true, cooldown:15, dmg:1,   speed:5.5 },
+  H: { code:'H', name:'TOKEN STREAM',      maxAmmo:200, cooldown:5,  dmg:1,   speed:6.2 },
+  S: { code:'S', name:'GREP SHOT',         maxAmmo:30,  cooldown:24, dmg:1,   speed:5,   spreadCount:5, spreadAngle:0.5 },
+  R: { code:'R', name:'REFACTOR ROCKET',   maxAmmo:30,  cooldown:28, dmg:8,   speed:4.2, explosive:true, splashRadius:28 },
+  F: { code:'F', name:'STACKTRACE FLAME',  maxAmmo:50,  cooldown:4,  dmg:0.4, speed:3.2, pierce:true, life:26 },
+  L: { code:'L', name:'--verbose LASER',   maxAmmo:40,  cooldown:10, dmg:3,   speed:9,   pierce:true }
+};
+const MELEE_RANGE = 14;
+const MELEE_DMG = 99;
+
+/* ============================= §8 PLAYER ================================= */
+const player = {
+  x:80, y:CFG.GROUND_Y-1, vx:0, vy:0, facing:1, onGround:false,
+  state:'idle', aim:{x:1,y:0,snapKey:'E'}, runFrame:0, runTimer:0,
+  invincible:0, hitTimer:0, lives:3, alive:true, deathX:80, deathY:CFG.GROUND_Y-1,
+  fireCooldown:0, meleeCooldown:0, grenadeCooldown:0,
+  weapon:'prompt', ammo:0, grenades:10, powStreak:0, attackTimer:0,
+  riding:false, slugCooldown:0
+};
+let score = 0;
+let hiScore = parseInt(localStorage.getItem('cursorSlugHiScore')||'0',10);
+let shakeTime=0, shakeMag=0;
+let hitstop = 0;
+
+function playerHitbox(){
+  return { x:player.x+CFG.PLAYER_HB.ox, y:player.y+CFG.PLAYER_HB.oy, w:CFG.PLAYER_HB.w, h:CFG.PLAYER_HB.h };
+}
+
+function snapDir(dx,dy){
+  if(dx===0 && dy===0) return player.facing>0?'E':'W';
+  const ang = Math.atan2(dy,dx);
+  const dirs = ['E','SE','S','SW','W','NW','N','NE'];
+  let idx = Math.round(ang/(Math.PI/4));
+  idx = ((idx%8)+8)%8;
+  return dirs[idx];
+}
+function computeAim(){
+  if(Input.aimMode==='mouse'){
+    const wx = Input.mouseX + camera.x, wy = Input.mouseY + camera.y;
+    const dx = wx-player.x, dy = wy-(player.y-8);
+    const len = Math.hypot(dx,dy)||1;
+    return { x:dx/len, y:dy/len, snapKey: snapDir(dx,dy) };
+  }
+  let hx = key('ArrowRight')?1:(key('ArrowLeft')?-1:0);
+  let vy = key('ArrowUp')?-1:0;
+  if(key('ArrowDown') && player.onGround){ hx=0; vy=0; }
+  if(hx===0 && vy===0) hx = player.facing;
+  const len = Math.hypot(hx,vy)||1;
+  return { x:hx/len, y:vy/len, snapKey: snapDir(hx,vy) };
+}
+
+function killPlayer(){
+  if(bossEntryGrace>0) return;
+  if(player.riding){ damageSlug(); return; }
+  if(player.hitTimer>0 || player.invincible>0) return;
+  SFX.playerDie();
+  spawnParticles(player.x, player.y-8, '#D97757', 18);
+  shakeTime=20; shakeMag=3; hitstop=CFG.HITSTOP_FRAMES;
+  player.lives--;
+  if(player.lives<=0){
+    player.alive=false;
+    gameOver();
+  } else {
+    player.hitTimer = 40;
+    player.invincible = CFG.INVINCIBLE_TIME;
+    player.x = player.deathX; player.y = player.deathY;
+    player.vx=0; player.vy=-3;
+    player.weapon='prompt'; player.ammo=0;
+    if(bossFightActive){
+      for(const b of enemyBullets) b.active=false;
+    }
+  }
+}
+
+function updatePlayer(){
+  if(!player.alive) return;
+  if(player.invincible>0) player.invincible--;
+  if(player.attackTimer>0) player.attackTimer--;
+
+  if(player.hitTimer>0){
+    player.hitTimer--;
+    player.vy += CFG.GRAVITY; player.vy = Math.min(player.vy, CFG.MAX_FALL);
+    moveAndCollide(player, 0, player.vy);
+    return;
+  }
+
+  checkSlugMount();
+  const dismounted = handleSlugDismount();
+  updateSlugFx();
+
+  const crouching = key('ArrowDown') && player.onGround && !player.riding;
+  player.aim = computeAim();
+  if(Input.aimMode==='mouse') player.facing = player.aim.x>=0?1:-1;
+
+  let vx = 0;
+  if(!crouching){
+    vx = key('ArrowRight')?CFG.MOVE_SPEED:(key('ArrowLeft')?-CFG.MOVE_SPEED:0);
+    if(vx!==0 && Input.aimMode!=='mouse') player.facing = sign(vx);
+  }
+
+  if(!player.riding && !dismounted){
+    if(keyDown('KeyZ','Space') && player.onGround){
+      player.vy = CFG.JUMP_VEL; player.onGround=false; SFX.jump();
+    }
+    if(!key('KeyZ','Space') && player.vy < CFG.JUMP_VEL*CFG.JUMP_CUT){
+      player.vy = CFG.JUMP_VEL*CFG.JUMP_CUT;
+    }
+  }
+
+  player.vy += CFG.GRAVITY;
+  if(player.vy>CFG.MAX_FALL) player.vy=CFG.MAX_FALL;
+
+  moveAndCollide(player, vx, player.vy);
+  if(player.onGround){
+    for(const c of conveyors){
+      if(player.x>c.x && player.x<c.x+c.w && Math.abs(player.y-c.y)<3){
+        player.x += c.push;
+        break;
+      }
+    }
+  }
+  const minX = bossFightActive ? arenaLeftBound : 8;
+  player.x = clamp(player.x, minX, LEVEL_WIDTH-8);
+
+  if(crouching) player.state='crouch';
+  else if(!player.onGround) player.state = 'jump';
+  else player.state = vx!==0?'run':'idle';
+
+  if(player.state==='run'){
+    player.runTimer++;
+    if(player.runTimer>=7){ player.runTimer=0; player.runFrame=(player.runFrame+1)%6; }
+  } else player.runTimer=0;
+
+  if(!bossFightActive){ player.deathX = player.x; player.deathY = player.y; }
+  if(player.riding && slug){ slug.x=player.x; slug.y=player.y; }
+
+  handleShoot();
+  handleGrenade();
+  Input.justDown = {};
+  Input.mouseRightJustDown = false;
+}
+
+/* ============================= §9 WEAPON / MELEE / GRENADE ================ */
+function nearestEnemyInRange(range){
+  let best=null, bestDist=Infinity;
+  for(const en of enemies){
+    if(!en.active) continue;
+    const dx = en.x-player.x, dy = en.y-8-(player.y-8);
+    const d = Math.hypot(dx,dy);
+    if(d<range && d<bestDist){ bestDist=d; best=en; }
+  }
+  return best;
+}
+function meleeAttack(target){
+  target.hp -= MELEE_DMG; target.flash=6;
+  spawnParticles(target.x,target.y,'#ffffff',6);
+  if(target.hp<=0) killEnemy(target);
+  player.attackTimer=5;
+  SFX.melee();
+}
+function spawnBullet(aim, wdef, spreadOffset){
+  const ang = Math.atan2(aim.y,aim.x) + (spreadOffset||0);
+  const dx = Math.cos(ang), dy = Math.sin(ang);
+  spawnFrom(bullets, b=>{
+    b.x = player.x + dx*8; b.y = player.y-9 + dy*6;
+    b.vx = dx*wdef.speed; b.vy = dy*wdef.speed;
+    b.dmg = wdef.dmg; b.life = wdef.life||70;
+    b.pierce = !!wdef.pierce; b.explosive = !!wdef.explosive; b.splashRadius = wdef.splashRadius||0;
+    b.hitSet = wdef.pierce ? new Set() : null;
+  });
+}
+function fireWeapon(){
+  const wdef = WEAPONS[player.weapon];
+  const aim = player.aim;
+  if(wdef.spreadCount){
+    for(let i=0;i<wdef.spreadCount;i++){
+      const off = (i-(wdef.spreadCount-1)/2) * (wdef.spreadAngle/(wdef.spreadCount-1));
+      spawnBullet(aim, wdef, off);
+    }
+  } else {
+    spawnBullet(aim, wdef, 0);
+  }
+  SFX.shoot();
+  player.attackTimer=6;
+  spawnCombatBurst(player.x + aim.x*8, player.y-9 + aim.y*5, 'muzzle', aim.x, aim.y);
+  if(!wdef.infinite){
+    player.ammo--;
+    if(player.ammo<=0){ player.weapon='prompt'; player.ammo=0; }
+  }
+}
+function handleShoot(){
+  if(player.riding){ handleSlugFire(); return; }
+  if(player.fireCooldown>0) player.fireCooldown--;
+  if(player.meleeCooldown>0) player.meleeCooldown--;
+  const wantFire = key('KeyX') || Input.mouseDown;
+  if(!wantFire) return;
+  const meleeTarget = nearestEnemyInRange(MELEE_RANGE);
+  if(meleeTarget){
+    if(player.meleeCooldown<=0){ player.meleeCooldown=12; meleeAttack(meleeTarget); }
+    return;
+  }
+  if(player.fireCooldown<=0){
+    const wdef = WEAPONS[player.weapon];
+    player.fireCooldown = wdef.cooldown;
+    fireWeapon();
+  }
+}
+
+const grenades = makePool(12, ()=>({x:0,y:0,vx:0,vy:0,life:0}));
+function handleGrenade(){
+  if(player.grenadeCooldown>0) player.grenadeCooldown--;
+  else player.grenadeCooldown=0;
+  const wantThrow = keyDown('KeyC') || Input.mouseRightJustDown;
+  if(wantThrow && player.grenades>0 && (player.grenadeCooldown||0)<=0){
+    queueOnboarding('grenade');
+    player.grenades--;
+    player.grenadeCooldown = 20;
+    const aim = player.aim;
+    spawnFrom(grenades, g=>{
+      g.x = player.x + aim.x*6; g.y = player.y-9;
+      g.vx = aim.x*3.4 + (aim.y<0?0.6*sign(aim.x||1):0);
+      g.vy = aim.y<0 ? -4.2 : -2.6;
+      g.life = 200;
+    });
+    SFX.grenadeThrow();
+  }
+}
+function explodeAt(x,y,radius,dmg){
+  spawnCombatBurst(x,y,'explosion');
+  spawnParticles(x,y,'#ff9955',16);
+  shakeTime=Math.max(shakeTime,16); shakeMag=Math.max(shakeMag,3);
+  SFX.explode();
+  for(const en of enemies){
+    if(!en.active) continue;
+    if(Math.hypot(en.x-x,en.y-en.hh-y)<radius+en.hw){
+      en.hp -= dmg; en.flash=6;
+      if(en.hp<=0) killEnemy(en);
+    }
+  }
+  const hb = playerHitbox();
+  const cx = hb.x+hb.w/2, cy = hb.y+hb.h/2;
+  if(Math.hypot(cx-x,cy-y)<radius) killPlayer();
+}
+function updateGrenades(){
+  for(const g of grenades){
+    if(!g.active) continue;
+    g.vy += CFG.GRAVITY*0.7;
+    g.x += g.vx; g.y += g.vy; g.life--;
+    let exploded=false;
+    for(const t of terrain){
+      if(g.x>t.x && g.x<t.x+t.w && g.y>t.y && g.y<t.y+t.h){ exploded=true; break; }
+    }
+    if(!exploded){
+      for(const en of enemies){
+        if(!en.active) continue;
+        if(Math.abs(g.x-en.x)<en.hw && Math.abs(g.y-(en.y-en.hh))<en.hh){ exploded=true; break; }
+      }
+    }
+    if(g.life<=0) exploded=true;
+    if(exploded){ g.active=false; explodeAt(g.x,g.y,26,6); }
+  }
+}
+
+function updateBullets(){
+  for(const b of bullets){
+    if(!b.active) continue;
+    b.x+=b.vx; b.y+=b.vy; b.life--;
+    if(b.life<=0){ b.active=false; continue; }
+    let hitTerrain=false;
+    for(const t of terrain){
+      if(b.x>t.x && b.x<t.x+t.w && b.y>t.y && b.y<t.y+t.h){ hitTerrain=true; break; }
+    }
+    if(hitTerrain){
+      if(b.explosive) explodeAt(b.x,b.y,b.splashRadius,b.dmg);
+      b.active=false; continue;
+    }
+    for(const en of enemies){
+      if(!en.active) continue;
+      if(b.hitSet && b.hitSet.has(en)) continue;
+      const pad = 3;
+      const box = { x:en.x-en.hw-pad, y:en.y-en.hh*2-pad, w:en.hw*2+pad*2, h:en.hh*2+pad*2 };
+      if(b.x>=box.x && b.x<=box.x+box.w && b.y>=box.y && b.y<=box.y+box.h){
+        en.hp -= b.dmg; en.flash=6;
+        spawnParticles(b.x,b.y,'#ffcc55',4);
+        if(en.hp<=0) killEnemy(en);
+        if(b.explosive){ explodeAt(b.x,b.y,b.splashRadius,b.dmg); b.active=false; break; }
+        if(b.pierce){ b.hitSet.add(en); } else { b.active=false; break; }
+      }
+    }
+    if(!b.active) continue;
+    if(boss && boss.active && !boss.dying){
+      const bpad = 3;
+      const bbox = { x:boss.x-boss.hw-bpad, y:boss.y-boss.hh*2-bpad, w:boss.hw*2+bpad*2, h:boss.hh*2+bpad*2 };
+      if(b.x>=bbox.x && b.x<=bbox.x+bbox.w && b.y>=bbox.y && b.y<=bbox.y+bbox.h){
+        if(boss.vulnerable){
+          bossTakeDamage(b.dmg, b.x, b.y);
+          if(b.explosive){ explodeAt(b.x,b.y,b.splashRadius,0); }
+          if(!b.pierce){ b.active=false; continue; }
+        } else {
+          spawnParticles(b.x,b.y,'#8899aa',3);
+          if(!b.pierce){ b.active=false; continue; }
+        }
+      }
+    }
+    for(const it of items){
+      if(!it.active || it.kind!=='crate') continue;
+      const box = { x:it.x-6, y:it.y-14, w:12, h:14 };
+      if(b.x>=box.x && b.x<=box.x+box.w && b.y>=box.y && b.y<=box.y+box.h){
+        it.hp -= b.dmg; it.flash=6; b.active=false;
+        spawnParticles(b.x,b.y,'#ffcc55',3);
+        if(it.hp<=0) killCrate(it);
+        break;
+      }
+    }
+  }
+  for(const b of enemyBullets){
+    if(!b.active) continue;
+    b.x+=b.vx; b.y+=b.vy; b.life--;
+    if(b.life<=0){ b.active=false; continue; }
+    const hb = playerHitbox();
+    if(b.x>hb.x && b.x<hb.x+hb.w && b.y>hb.y && b.y<hb.y+hb.h){
+      b.active=false; killPlayer();
+    }
+  }
+  updateGrenades();
+}
+
+/* ============================= §8c SLUG (CONTAINER TANK) =================== */
+const SLUG_MOUNT_RANGE = 16;
+const SLUG_MAX_DUR = 3;
+let slug = null;
+function spawnSlug(x,y){
+  slug = { active:true, x, y, durability:SLUG_MAX_DUR, flash:0, invincible:0 };
+}
+function damageSlug(){
+  if(!slug || slug.invincible>0) return;
+  slug.invincible = 50;
+  slug.durability--; slug.flash=10;
+  shakeTime=Math.max(shakeTime,14); shakeMag=Math.max(shakeMag,3);
+  spawnParticles(player.x,player.y-10,'#cccccc',10);
+  SFX.hurt();
+  if(slug.durability<=0){
+    spawnParticles(player.x,player.y-10,'#ffaa55',24);
+    shakeTime=24; shakeMag=5; SFX.explode();
+    player.riding=false;
+    player.invincible=CFG.INVINCIBLE_TIME;
+    slug.active=false; slug=null;
+  }
+}
+function checkSlugMount(){
+  if(player.riding || !slug || !slug.active) return;
+  if(Math.hypot(player.x-slug.x, player.y-slug.y)<SLUG_MOUNT_RANGE){
+    player.riding = true;
+    player.x = slug.x; player.y = slug.y; player.vy=0;
+    queueOnboarding('tank');
+  }
+}
+function handleSlugDismount(){
+  if(!player.riding) return false;
+  if(key('ArrowDown') && keyDown('KeyZ','Space')){
+    player.riding = false;
+    player.invincible = 30;
+    if(slug){ slug.x=player.x; slug.y=player.y; }
+    return true;
+  }
+  return false;
+}
+function handleSlugFire(){
+  if(player.slugCooldown>0){ player.slugCooldown--; return; }
+  const wantFire = key('KeyX') || Input.mouseDown;
+  if(!wantFire) return;
+  player.slugCooldown = 22;
+  const aim = player.aim;
+  spawnFrom(bullets, b=>{
+    b.x = player.x + aim.x*10; b.y = player.y-10 + aim.y*6;
+    b.vx = aim.x*5; b.vy = aim.y*5;
+    b.dmg=10; b.life=80; b.pierce=false; b.explosive=true; b.splashRadius=32; b.hitSet=null;
+  });
+  player.attackTimer=8;
+  spawnCombatBurst(player.x + aim.x*10, player.y-10 + aim.y*5, 'tank-muzzle', aim.x, aim.y);
+  SFX.shoot();
+}
+function updateSlugFx(){
+  if(!slug) return;
+  if(slug.flash>0) slug.flash--;
+  if(slug.invincible>0) slug.invincible--;
+}
+
+/* ============================= §9 ENEMIES ================================ */
+const ENEMY_DEF = {
+  nullptr: { hp:1, hw:4, hh:5, score:100, speed:0.5 },
+  segfault:{ hp:1, hw:4, hh:4, score:150, speed:0 },
+  infloop: { hp:2, hw:4, hh:3, score:250, speed:0.6 },
+  stackov: { hp:2, hw:4, hh:5, score:200, speed:0.4 },
+  memleak: { hp:3, hw:4, hh:4, score:300, speed:0.35 },
+  deprecated:{ hp:6, hw:5, hh:6, score:500, speed:0 },
+  racecond:{ hp:3, hw:4, hh:5, score:400, speed:1.4 }
+};
+const enemies = [];
+function spawnEnemy(type,x,y){
+  const def = ENEMY_DEF[type];
+  enemies.push({
+    active:true, type, x, y, baseY:y, hp:def.hp, maxHp:def.hp, hw:def.hw, hh:def.hh,
+    score:def.score, speed:def.speed, facing:-1, timer:Math.random()*60,
+    flash:0, t:0, splitDone:false, teleTimer:60+Math.random()*40, dashing:false
+  });
+}
+function killEnemy(en){
+  en.active=false;
+  score += en.score;
+  spawnPopup(en.x, en.y-10, '+'+en.score);
+  spawnParticles(en.x, en.y, '#ff5555', 10);
+  SFX.enemyDie();
+  if(en.type==='memleak' && !en.splitDone){
+    for(const dx of [-10,10]){
+      spawnEnemy('memleak', en.x+dx, en.y);
+      const child = enemies[enemies.length-1];
+      child.splitDone = true; child.hp=1; child.maxHp=1; child.hw=3; child.hh=3;
+    }
+  }
+}
+function fireEnemyBullet(x,y,dx,dy,speed){
+  const len=Math.hypot(dx,dy)||1;
+  spawnFrom(enemyBullets, b=>{ b.x=x; b.y=y; b.vx=dx/len*speed; b.vy=dy/len*speed; b.life=120; });
+}
+function updateEnemies(){
+  for(const en of enemies){
+    if(!en.active) continue;
+    if(en.flash>0) en.flash--;
+    en.t++;
+    if(en.type==='nullptr'){
+      const dx = player.x-en.x;
+      if(Math.abs(dx)>18) en.x += sign(dx)*en.speed;
+      en.facing = sign(dx)||en.facing;
+      en.timer--;
+      if(en.timer<=0 && Math.abs(dx)<160 && Math.abs(player.y-en.y)<40){
+        en.timer=90;
+        fireEnemyBullet(en.x,en.y-4,dx,player.y-en.y,2.2);
+      }
+    } else if(en.type==='segfault'){
+      en.facing = sign(player.x-en.x)||en.facing;
+      en.timer--;
+      if(en.timer<=0 && Math.abs(player.x-en.x)<200){
+        en.timer=90;
+        fireEnemyBullet(en.x,en.y-3,player.x-en.x,player.y-en.y,2.6);
+      }
+    } else if(en.type==='infloop'){
+      en.y = en.baseY + Math.sin(en.t*0.05)*10;
+      const dx = player.x-en.x;
+      en.x += sign(dx)*en.speed;
+      en.facing = sign(dx)||en.facing;
+      en.timer--;
+      if(en.timer<=0 && Math.abs(dx)<60){
+        en.timer=110;
+        fireEnemyBullet(en.x,en.y+4,0,1,1.8);
+      }
+    } else if(en.type==='stackov'){
+      const dx = player.x-en.x;
+      if(Math.abs(dx)<90) en.x -= sign(dx)*en.speed;
+      else if(Math.abs(dx)>140) en.x += sign(dx)*en.speed;
+      en.facing = sign(dx)||en.facing;
+      en.timer--;
+      if(en.timer<=0 && Math.abs(dx)<220){
+        en.timer=100;
+        const dist = Math.abs(dx)||1;
+        fireEnemyBullet(en.x,en.y-6, sign(dx)*0.9, -1.1, 2.0);
+      }
+    } else if(en.type==='memleak'){
+      const dx = player.x-en.x;
+      if(Math.abs(dx)>10) en.x += sign(dx)*en.speed;
+      en.facing = sign(dx)||en.facing;
+    } else if(en.type==='deprecated'){
+      en.timer--;
+      if(en.timer<=0){
+        en.timer=100;
+        for(let i=-1;i<=1;i++){
+          const dx=player.x-en.x, dy=(player.y-8)-(en.y-8);
+          const ang = Math.atan2(dy,dx) + i*0.3;
+          fireEnemyBullet(en.x,en.y-6, Math.cos(ang), Math.sin(ang), 2.2);
+        }
+      }
+    } else if(en.type==='racecond'){
+      en.teleTimer--;
+      if(en.teleTimer<=0){
+        if(!en.dashing){
+          en.dashing=true; en.teleTimer=45;
+          const dx = player.x-en.x;
+          en.facing = sign(dx)||en.facing;
+          en.dashVX = en.facing*en.speed;
+          spawnParticles(en.x,en.y-4,'#dd66ff',6);
+        } else {
+          en.dashing=false; en.teleTimer=70+Math.random()*40;
+          en.dashVX=0;
+        }
+      }
+      if(en.dashing) en.x += en.dashVX;
+    }
+    const hb = playerHitbox();
+    const box = { x:en.x-en.hw, y:en.y-en.hh*2, w:en.hw*2, h:en.hh*2 };
+    if(aabbOverlap(hb,box)){
+      if(player.riding && en.type!=='infloop') killEnemy(en);
+      else killPlayer();
+    }
+  }
+}
+
+let SPAWN_SCRIPT = [];
+let spawnIdx = 0;
+function updateSpawns(){
+  while(spawnIdx<SPAWN_SCRIPT.length && SPAWN_SCRIPT[spawnIdx].x < camera.x+CFG.W+40){
+    const s = SPAWN_SCRIPT[spawnIdx];
+    spawnEnemy(s.type, s.x, s.y);
+    spawnIdx++;
+  }
+}
+
+/* ============================= §9b BOSS =================================== */
+let boss = null;
+const BOSS_DEFS = {
+  gate1: { name:'NULL POINTER GATE', maxHp:120, hw:33, hh:18, scoreValue:10000, drawScale:3 },
+  hydra: { name:'MEMORY LEAK HYDRA', maxHp:160, hw:33, hh:21, scoreValue:15000, drawScale:3 },
+  halluc:{ name:'HALLUCINATION', maxHp:200, hw:36, hh:24, scoreValue:20000, drawScale:3.2 }
+};
+function spawnBoss(type, x, y){
+  const def = BOSS_DEFS[type];
+  boss = {
+    active:true, type, x, y, baseY:y, hp:def.maxHp, maxHp:def.maxHp, hw:def.hw, hh:def.hh,
+    scale:def.drawScale||1, scoreValue:def.scoreValue, phase:0, timer:0, vulnerable:true, flash:0,
+    dying:false, deathTimer:0, chargeVX:0, anchorX:x, name:def.name
+  };
+}
+function bossTakeDamage(dmg, hx, hy){
+  if(!boss || !boss.active || boss.dying || !boss.vulnerable) return;
+  boss.hp -= dmg; boss.flash=6;
+  spawnParticles(hx,hy,'#ffcc55',4);
+  if(boss.hp<=0){
+    boss.hp=0; boss.dying=true; boss.deathTimer=90;
+  }
+}
+function updateBoss(){
+  if(!boss || !boss.active) return;
+  if(boss.flash>0) boss.flash--;
+  if(boss.dying){
+    boss.deathTimer--;
+    if(boss.deathTimer%6===0){
+      spawnParticles(boss.x+(Math.random()-0.5)*boss.hw*2, boss.y-Math.random()*boss.hh*1.6, '#ffaa55', 8);
+      shakeTime=Math.max(shakeTime,8); shakeMag=Math.max(shakeMag,2);
+    }
+    if(boss.deathTimer<=0){
+      boss.active=false;
+      score += boss.scoreValue;
+      spawnParticles(boss.x, boss.y-boss.hh, '#ffffff', 30);
+      shakeTime=30; shakeMag=5;
+      SFX.explode();
+      stageClear();
+    }
+    return;
+  }
+  const hpFrac = boss.hp/boss.maxHp;
+  const newPhase = hpFrac>0.66 ? 1 : (hpFrac>0.33 ? 2 : 3);
+  if(newPhase!==boss.phase){ boss.phase=newPhase; boss.timer=0; }
+  boss.timer++;
+
+  if(boss.type==='gate1') bossPatternGate1();
+  else if(boss.type==='hydra') bossPatternHydra();
+  else if(boss.type==='halluc') bossPatternHalluc();
+
+  const hb = playerHitbox();
+  const box = { x:boss.x-boss.hw, y:boss.y-boss.hh*2, w:boss.hw*2, h:boss.hh*2 };
+  if(aabbOverlap(hb,box)) killPlayer();
+}
+function bossPatternGate1(){
+  if(boss.phase===1){
+    boss.vulnerable = true;
+    boss.x += (boss.anchorX-boss.x)*0.05;
+    if(boss.timer%80===0){
+      const dx=player.x-boss.x, dy=(player.y-8)-(boss.y-boss.hh*0.6);
+      for(let i=-2;i<=2;i++){
+        const spreadAng = Math.atan2(dy,dx) + i*0.22;
+        fireEnemyBullet(boss.x-boss.hw*0.6, boss.y-boss.hh*0.6, Math.cos(spreadAng), Math.sin(spreadAng), 2.4);
+      }
+    }
+  } else if(boss.phase===2){
+    const cyclePos = boss.timer%140;
+    if(cyclePos<40){
+      boss.vulnerable = true;
+    } else if(cyclePos<75){
+      boss.vulnerable = false;
+      boss.x -= 3.2;
+      shakeTime=Math.max(shakeTime,4); shakeMag=Math.max(shakeMag,1.5);
+    } else if(cyclePos<115){
+      boss.vulnerable = true;
+      boss.x += (boss.anchorX-boss.x)*0.08;
+    } else {
+      boss.vulnerable = true;
+    }
+  } else {
+    boss.vulnerable = true;
+    boss.x += (boss.anchorX-boss.x)*0.05;
+    if(boss.timer%50===0){
+      const dx=player.x-boss.x, dy=(player.y-8)-(boss.y-boss.hh*0.6);
+      const len=Math.hypot(dx,dy)||1;
+      fireEnemyBullet(boss.x-boss.hw*0.6, boss.y-boss.hh*0.6, dx/len, dy/len, 3.4);
+    }
+  }
+}
+function bossPatternHydra(){
+  boss.y = boss.baseY + Math.sin(boss.timer*0.04)*4;
+  if(boss.phase===1){
+    boss.vulnerable = true;
+    if(boss.timer%60===0){
+      for(let i=0;i<3;i++){
+        const ang = -0.5+i*0.5 + (Math.random()-0.5)*0.1;
+        fireEnemyBullet(boss.x-boss.hw*0.5, boss.y-boss.hh*0.8, Math.cos(Math.PI-ang), Math.sin(Math.PI-ang)*-1+0.3, 2.2);
+      }
+    }
+  } else if(boss.phase===2){
+    const cyclePos = boss.timer%90;
+    boss.vulnerable = cyclePos>=15;
+    if(boss.timer%90===0){
+      shakeTime=Math.max(shakeTime,10); shakeMag=Math.max(shakeMag,2.5);
+      for(let i=-3;i<=3;i++){
+        fireEnemyBullet(boss.x, boss.y-boss.hh, i*0.28, -1, 2.6);
+      }
+    }
+  } else {
+    boss.vulnerable = true;
+    if(boss.timer%35===0){
+      const dx=player.x-boss.x, dy=(player.y-8)-(boss.y-boss.hh*0.6);
+      const len=Math.hypot(dx,dy)||1;
+      fireEnemyBullet(boss.x-boss.hw*0.5, boss.y-boss.hh*0.6, dx/len, dy/len, 3.6);
+    }
+  }
+}
+function bossPatternHalluc(){
+  boss.decoyOffsets = [-70,70];
+  if(boss.phase===1){
+    boss.vulnerable = true;
+    boss.x += (boss.anchorX-boss.x)*0.04;
+    boss.y = boss.baseY + Math.sin(boss.timer*0.03)*8;
+    if(boss.timer%70===0){
+      const dx=player.x-boss.x, dy=(player.y-8)-(boss.y-boss.hh*0.6);
+      const len=Math.hypot(dx,dy)||1;
+      fireEnemyBullet(boss.x,boss.y-boss.hh*0.6, dx/len, dy/len, 2.4);
+    }
+  } else if(boss.phase===2){
+    const cyclePos = boss.timer%160;
+    if(cyclePos===1){ boss.dashTargetX = player.x; }
+    if(cyclePos<50){
+      boss.vulnerable = false;
+      boss.x += (boss.dashTargetX-boss.x)*0.06;
+    } else if(cyclePos<70){
+      boss.vulnerable = false;
+      shakeTime=Math.max(shakeTime,6); shakeMag=Math.max(shakeMag,2);
+    } else {
+      boss.vulnerable = true;
+      boss.x += (boss.anchorX-boss.x)*0.05;
+    }
+  } else {
+    boss.vulnerable = true;
+    if(boss.timer%55===0){
+      for(let i=0;i<8;i++){
+        const ang = (Math.PI*2/8)*i;
+        fireEnemyBullet(boss.x,boss.y-boss.hh*0.6, Math.cos(ang), Math.sin(ang), 2.2);
+      }
+    }
+  }
+}
+function checkBossTrigger(){
+  if(bossFightActive || (boss && boss.active) || !bossTriggerX) return;
+  if(player.x >= bossTriggerX){
+    bossFightActive = true;
+    bossEntryGrace = BOSS_ENTRY_GRACE;
+    player.invincible = Math.max(player.invincible, BOSS_ENTRY_GRACE);
+    // Move the operator onto the visible side of the locked arena camera.
+    // Previously the stage-end camera could leave the player just off-screen
+    // while the boss bullets were already active.
+    const arenaBossX = clamp(Math.max(bossArenaCamX + CFG.W*0.62, bossTriggerX+100), bossTriggerX+80, LEVEL_WIDTH-40);
+    const arenaPlayerX = clamp(Math.max(arenaBossX-140, arenaLeftBound+8), arenaLeftBound+8, LEVEL_WIDTH-16);
+    player.x = arenaPlayerX;
+    player.y = bossFloorY;
+    player.vx = 0; player.vy = 0; player.onGround = true; player.state = 'idle';
+    player.deathX = arenaPlayerX;
+    player.deathY = bossFloorY;
+    for(const b of enemyBullets) b.active=false;
+    for(const en of enemies) en.active=false;
+    // The boss arena is a clean encounter: do not let the streaming scripts
+    // repopulate enemies or rewards after the trigger frame.
+    spawnIdx = SPAWN_SCRIPT.length;
+    itemSpawnIdx = ITEM_SCRIPT.length;
+    powSpawnIdx = POW_SCRIPT.length;
+    camera.locked = true;
+    camera.lockX = bossArenaCamX;
+    camera.x = clamp(camera.x, 0, Math.max(0, LEVEL_WIDTH-CFG.W));
+    if(shaftZone){
+      camera.y = clamp(bossFloorY-CFG.H*0.5, shaftZone.minY, shaftZone.maxY);
+    } else {
+      camera.y = 0;
+    }
+    spawnBoss(currentBossType, arenaBossX, bossFloorY);
+    queueOnboarding('boss-'+stageNum);
+  }
+}
+
+/* ============================= §10 ITEMS / CRATES / POW =================== */
+const WEAPON_KEYS = ['H','S','R','F','L'];
+const items = [];
+function spawnCrate(x,y){
+  items.push({ active:true, kind:'crate', x, y, hp:2, flash:0 });
+}
+function collectWeapon(key_){
+  player.weapon = key_;
+  player.ammo = WEAPONS[key_].maxAmmo;
+  queueOnboarding('weapon-'+key_);
+  SFX.pickup();
+}
+function killCrate(it){
+  it.active=false;
+  const key_ = WEAPON_KEYS[Math.floor(Math.random()*WEAPON_KEYS.length)];
+  collectWeapon(key_);
+  spawnPopup(it.x, it.y-14, WEAPONS[key_].code+' GET');
+  spawnParticles(it.x,it.y-6,'#ffe27a',10);
+}
+function updateItems(){
+  for(const it of items){
+    if(!it.active) continue;
+    if(it.flash>0) it.flash--;
+  }
+}
+
+let ITEM_SCRIPT = [];
+let itemSpawnIdx = 0;
+function updateItemSpawns(){
+  while(itemSpawnIdx<ITEM_SCRIPT.length && ITEM_SCRIPT[itemSpawnIdx].x < camera.x+CFG.W+40){
+    const s = ITEM_SCRIPT[itemSpawnIdx];
+    spawnCrate(s.x, s.y);
+    itemSpawnIdx++;
+  }
+}
+
+const POW_STREAK_SCORES = [1000,2000,4000,8000];
+const pows = [];
+function spawnPow(x,y){
+  pows.push({ active:true, x, y, freed:false, freeTimer:0 });
+}
+function rescuePow(p){
+  p.freed = true; p.freeTimer = 60;
+  queueOnboarding('pow');
+  const streakScore = POW_STREAK_SCORES[Math.min(player.powStreak, POW_STREAK_SCORES.length-1)];
+  player.powStreak++;
+  const roll = Math.random();
+  if(roll<0.34){
+    const key_ = WEAPON_KEYS[Math.floor(Math.random()*WEAPON_KEYS.length)];
+    collectWeapon(key_);
+    spawnPopup(p.x,p.y-14, WEAPONS[key_].code+' GET');
+  } else if(roll<0.67){
+    player.grenades = Math.min(30, player.grenades+5);
+    spawnPopup(p.x,p.y-14, '+5 SIGKILL');
+  } else {
+    spawnPopup(p.x,p.y-14, '+'+streakScore);
+  }
+  score += streakScore;
+  spawnParticles(p.x,p.y-6,'#7fffb0',12);
+  SFX.pow();
+}
+function updatePows(){
+  const hb = playerHitbox();
+  for(const p of pows){
+    if(!p.active) continue;
+    if(p.freed){ p.freeTimer--; if(p.freeTimer<=0) p.active=false; continue; }
+    const box = { x:p.x-5, y:p.y-14, w:10, h:14 };
+    const meleeTarget = Math.hypot(p.x-player.x, (p.y-8)-(player.y-8))<MELEE_RANGE && key('KeyX');
+    if(aabbOverlap(hb,box) || meleeTarget) rescuePow(p);
+  }
+}
+let POW_SCRIPT = [];
+let powSpawnIdx = 0;
+function updatePowSpawns(){
+  while(powSpawnIdx<POW_SCRIPT.length && POW_SCRIPT[powSpawnIdx].x < camera.x+CFG.W+40){
+    const s = POW_SCRIPT[powSpawnIdx];
+    spawnPow(s.x, s.y);
+    powSpawnIdx++;
+  }
+}
+
+/* ============================= §10 PARTICLES / FX ========================= */
+function updateFx(){
+  for(const p of particles){
+    if(!p.active) continue;
+    p.x+=p.vx; p.y+=p.vy; p.vy+=0.12; p.life--;
+    if(p.life<=0) p.active=false;
+  }
+  for(const p of popups){
+    if(!p.active) continue;
+    p.y+=p.vy; p.life--;
+    if(p.life<=0) p.active=false;
+  }
+  for(let i=combatBursts.length-1;i>=0;i--){
+    combatBursts[i].life--;
+    if(combatBursts[i].life<=0) combatBursts.splice(i,1);
+  }
+  if(shakeTime>0) shakeTime--; else shakeMag=0;
+}
+
+/* ============================= §10b STAGE 1 DATA ============================ */
+const STAGE_COUNT = 3;
+let stageNum = 1;
+let bossTriggerX = 0;
+let bossArenaCamX = 0;
+let arenaLeftBound = 0;
+let bossFightActive = false;
+let currentBossType = 'gate1';
+let bossFloorY = CFG.GROUND_Y-1;
+let bossEntryGrace = 0;
+const BOSS_ENTRY_GRACE = 150;
+
+function buildStage1(){
+  LEVEL_WIDTH = 3600;
+  terrain = [
+    {x:0, y:CFG.GROUND_Y, w:LEVEL_WIDTH, h:40},
+    {x:520, y:CFG.GROUND_Y-30, w:70, h:12},
+    {x:900, y:CFG.GROUND_Y-46, w:60, h:12},
+    {x:1550, y:CFG.GROUND_Y-30, w:90, h:12},
+    {x:2200, y:CFG.GROUND_Y-30, w:60, h:12},
+    {x:2450, y:CFG.GROUND_Y-50, w:60, h:12}
+  ];
+  SPAWN_SCRIPT = [
+    {x:260, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:420, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:640, y:CFG.GROUND_Y-31, type:'segfault'},
+    {x:820, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:960, y:CFG.GROUND_Y-70, type:'infloop'},
+    {x:1200, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:1260, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:1500, y:CFG.GROUND_Y-31, type:'segfault'},
+    {x:1700, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:1900, y:CFG.GROUND_Y-80, type:'infloop'},
+    {x:2100, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:2300, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:2500, y:CFG.GROUND_Y-51, type:'segfault'},
+    {x:2700, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:2900, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:3000, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:3080, y:CFG.GROUND_Y-31, type:'segfault'}
+  ];
+  ITEM_SCRIPT = [
+    {x:700, y:CFG.GROUND_Y-1},
+    {x:1450, y:CFG.GROUND_Y-1},
+    {x:2050, y:CFG.GROUND_Y-1},
+    {x:2650, y:CFG.GROUND_Y-1}
+  ];
+  POW_SCRIPT = [
+    {x:1050, y:CFG.GROUND_Y-1},
+    {x:1850, y:CFG.GROUND_Y-1},
+    {x:2750, y:CFG.GROUND_Y-1},
+    {x:3300, y:CFG.GROUND_Y-1},
+    {x:3450, y:CFG.GROUND_Y-1}
+  ];
+  bossTriggerX = 3150;
+  bossArenaCamX = LEVEL_WIDTH-CFG.W;
+  arenaLeftBound = bossTriggerX-20;
+  currentBossType = 'gate1';
+  bossFloorY = CFG.GROUND_Y-1;
+  shaftZone = null;
+  conveyors = [];
+  spawnSlug(1330, CFG.GROUND_Y-1);
+}
+
+let stage2LowerY = CFG.GROUND_Y+140;
+function buildStage2(){
+  const LOWER_Y = CFG.GROUND_Y+140;
+  stage2LowerY = LOWER_Y;
+  LEVEL_WIDTH = 3700;
+  terrain = [
+    {x:0, y:CFG.GROUND_Y, w:860, h:40},
+    {x:300, y:CFG.GROUND_Y-32, w:60, h:12},
+    {x:600, y:CFG.GROUND_Y-30, w:60, h:12},
+    {x:860, y:LOWER_Y, w:LEVEL_WIDTH-860, h:220},
+    {x:1050, y:LOWER_Y-50, w:70, h:14},
+    {x:1450, y:LOWER_Y-50, w:70, h:14},
+    {x:1900, y:LOWER_Y-50, w:70, h:14},
+    {x:2350, y:LOWER_Y-50, w:70, h:14},
+    {x:2800, y:LOWER_Y-50, w:70, h:14}
+  ];
+  shaftZone = { x1:820, x2:LEVEL_WIDTH, minY:0, maxY: (LOWER_Y+40+CFG.H)-CFG.H };
+  SPAWN_SCRIPT = [
+    {x:260, y:CFG.GROUND_Y-1, type:'stackov'},
+    {x:420, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:600, y:CFG.GROUND_Y-31, type:'segfault'},
+    {x:760, y:CFG.GROUND_Y-1, type:'memleak'},
+    {x:1000, y:LOWER_Y-1, type:'nullptr'},
+    {x:1100, y:LOWER_Y-90, type:'infloop'},
+    {x:1300, y:LOWER_Y-1, type:'nullptr'},
+    {x:1360, y:LOWER_Y-1, type:'nullptr'},
+    {x:1470, y:LOWER_Y-1, type:'segfault'},
+    {x:1600, y:LOWER_Y-1, type:'stackov'},
+    {x:1750, y:LOWER_Y-1, type:'memleak'},
+    {x:1900, y:LOWER_Y-90, type:'infloop'},
+    {x:2100, y:LOWER_Y-1, type:'nullptr'},
+    {x:2250, y:LOWER_Y-1, type:'stackov'},
+    {x:2400, y:LOWER_Y-1, type:'nullptr'},
+    {x:2550, y:LOWER_Y-1, type:'segfault'},
+    {x:2700, y:LOWER_Y-1, type:'memleak'},
+    {x:2900, y:LOWER_Y-1, type:'nullptr'},
+    {x:3050, y:LOWER_Y-1, type:'segfault'},
+    {x:3200, y:LOWER_Y-90, type:'infloop'}
+  ];
+  ITEM_SCRIPT = [
+    {x:500, y:CFG.GROUND_Y-1},
+    {x:1550, y:LOWER_Y-1},
+    {x:2500, y:LOWER_Y-1},
+    {x:3150, y:LOWER_Y-1}
+  ];
+  POW_SCRIPT = [
+    {x:700, y:CFG.GROUND_Y-1},
+    {x:1700, y:LOWER_Y-1},
+    {x:2050, y:LOWER_Y-1},
+    {x:2650, y:LOWER_Y-1},
+    {x:3300, y:LOWER_Y-1}
+  ];
+  bossTriggerX = 3400;
+  bossArenaCamX = LEVEL_WIDTH-CFG.W;
+  arenaLeftBound = bossTriggerX-20;
+  currentBossType = 'hydra';
+  bossFloorY = LOWER_Y-1;
+  conveyors = [];
+  slug = null;
+}
+
+function buildStage3(){
+  LEVEL_WIDTH = 3700;
+  terrain = [
+    {x:0, y:CFG.GROUND_Y, w:LEVEL_WIDTH, h:40},
+    {x:500, y:CFG.GROUND_Y-30, w:80, h:12},
+    {x:900, y:CFG.GROUND_Y-46, w:60, h:12},
+    {x:1300, y:CFG.GROUND_Y-30, w:90, h:12},
+    {x:1900, y:CFG.GROUND_Y-30, w:60, h:12},
+    {x:2200, y:CFG.GROUND_Y-46, w:60, h:12},
+    {x:2600, y:CFG.GROUND_Y-30, w:90, h:12},
+    {x:3050, y:CFG.GROUND_Y-30, w:60, h:12}
+  ];
+  conveyors = [
+    {x:1500, y:CFG.GROUND_Y, w:220, h:40, push:0.7},
+    {x:2750, y:CFG.GROUND_Y, w:220, h:40, push:-0.7}
+  ];
+  shaftZone = null;
+  SPAWN_SCRIPT = [
+    {x:260, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:340, y:CFG.GROUND_Y-1, type:'racecond'},
+    {x:520, y:CFG.GROUND_Y-31, type:'deprecated'},
+    {x:700, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:850, y:CFG.GROUND_Y-1, type:'stackov'},
+    {x:1050, y:CFG.GROUND_Y-1, type:'racecond'},
+    {x:1250, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:1320, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:1550, y:CFG.GROUND_Y-1, type:'memleak'},
+    {x:1700, y:CFG.GROUND_Y-31, type:'deprecated'},
+    {x:1850, y:CFG.GROUND_Y-1, type:'racecond'},
+    {x:2000, y:CFG.GROUND_Y-1, type:'segfault'},
+    {x:2150, y:CFG.GROUND_Y-1, type:'stackov'},
+    {x:2350, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:2420, y:CFG.GROUND_Y-1, type:'nullptr'},
+    {x:2600, y:CFG.GROUND_Y-1, type:'racecond'},
+    {x:2800, y:CFG.GROUND_Y-31, type:'deprecated'},
+    {x:2950, y:CFG.GROUND_Y-1, type:'memleak'},
+    {x:3100, y:CFG.GROUND_Y-1, type:'stackov'},
+    {x:3250, y:CFG.GROUND_Y-1, type:'racecond'},
+    {x:3400, y:CFG.GROUND_Y-1, type:'nullptr'}
+  ];
+  ITEM_SCRIPT = [
+    {x:600, y:CFG.GROUND_Y-1},
+    {x:1400, y:CFG.GROUND_Y-1},
+    {x:2100, y:CFG.GROUND_Y-1},
+    {x:2900, y:CFG.GROUND_Y-1},
+    {x:3350, y:CFG.GROUND_Y-1}
+  ];
+  POW_SCRIPT = [
+    {x:950, y:CFG.GROUND_Y-1},
+    {x:1600, y:CFG.GROUND_Y-1},
+    {x:2250, y:CFG.GROUND_Y-1},
+    {x:3000, y:CFG.GROUND_Y-1},
+    {x:3500, y:CFG.GROUND_Y-1}
+  ];
+  bossTriggerX = 3550;
+  bossArenaCamX = LEVEL_WIDTH-CFG.W;
+  arenaLeftBound = bossTriggerX-20;
+  currentBossType = 'halluc';
+  bossFloorY = CFG.GROUND_Y-1;
+  spawnSlug(1900, CFG.GROUND_Y-1);
+}
+
+/* ============================= §11 SCENES / GAME STATE ==================== */
+const STAGE_NAMES = ['SANDBOX DESERT','MEMORY CAVERN','KERNEL FORTRESS'];
+let scene = 'TITLE';
+let stageClearTimer = 0;
+let stageClearBonus = 0;
+
+function loadStage(n){
+  stageNum = n;
+  boss = null; bossFightActive=false; camera.locked=false; camera.lockX=0;
+  bossEntryGrace=0;
+  slug = null; player.riding = false;
+  spawnIdx=0; itemSpawnIdx=0; powSpawnIdx=0;
+  enemies.length=0; items.length=0; pows.length=0;
+  for(const b of bullets) b.active=false;
+  for(const b of enemyBullets) b.active=false;
+  for(const g of grenades) g.active=false;
+  for(const p of particles) p.active=false;
+  for(const p of popups) p.active=false;
+  combatBursts.length=0;
+  if(n===1) buildStage1();
+  else if(n===2) buildStage2();
+  else if(n===3) buildStage3();
+  player.x=80; player.y=CFG.GROUND_Y-1; player.vx=0; player.vy=0; player.facing=1;
+  player.deathX=80; player.deathY=CFG.GROUND_Y-1;
+  camera.x=0; camera.y=0;
+}
+function resetGame(){
+  score=0;
+  player.lives=3; player.alive=true; player.hitTimer=0; player.invincible=90;
+  player.weapon='prompt'; player.ammo=0; player.grenades=10; player.powStreak=0;
+  player.fireCooldown=0; player.meleeCooldown=0; player.grenadeCooldown=0; player.slugCooldown=0; player.attackTimer=0;
+  loadStage(1);
+  scene='PLAY';
+  queueOnboarding('controls');
+  document.getElementById('restartBtn').style.display='none';
+}
+function gameOver(){
+  scene='GAMEOVER';
+  if(score>hiScore){ hiScore=score; localStorage.setItem('cursorSlugHiScore',String(hiScore)); }
+  document.getElementById('restartBtn').style.display='block';
+}
+function stageClear(){
+  scene='STAGECLEAR';
+  stageClearBonus = player.grenades*100;
+  score += stageClearBonus;
+  stageClearTimer = 180;
+}
+function advanceStage(){
+  if(stageNum>=STAGE_COUNT){
+    scene='ENDING';
+    if(score>hiScore){ hiScore=score; localStorage.setItem('cursorSlugHiScore',String(hiScore)); }
+    document.getElementById('restartBtn').style.display='block';
+    return;
+  }
+  player.powStreak=0;
+  loadStage(stageNum+1);
+  player.invincible=90;
+  scene='PLAY';
+}
+document.getElementById('restartBtn').addEventListener('click', ()=>{ resetGame(); });
+window.addEventListener('keydown', e=>{
+  if(scene==='TITLE'){ resetGame(); }
+  else if(scene==='GAMEOVER' && e.code==='KeyR'){ resetGame(); }
+  else if(scene==='ENDING' && e.code==='KeyR'){ resetGame(); }
+  else if(scene==='STAGECLEAR' && stageClearTimer<=0){ advanceStage(); }
+});
+
+/* ============================= §12 RENDER ================================ */
+const ctx = canvas.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const RENDER_SCALE = 2;
+canvas.width = CFG.W*RENDER_SCALE;
+canvas.height = CFG.H*RENDER_SCALE;
+ctx.imageSmoothingEnabled = false;
+ctx.scale(RENDER_SCALE,RENDER_SCALE);
+function loadArt(src){
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = src;
+  return img;
+}
+function artReady(img){ return !!(img && img.complete && img.naturalWidth>0); }
+const ART = {
+  backgrounds: {
+    1:loadArt('assets/stage1-desert-bg.png'),
+    2:loadArt('assets/stage2-cavern-bg.png'),
+    3:loadArt('assets/stage3-fortress-bg.png')
+  },
+  terrain:loadArt('assets/terrain-steel-texture.png'),
+  player: {
+    idle:loadArt('assets/frames/player-idle.png'),
+    run:[1,2,3,4,5,6].map(n=>loadArt('assets/frames/player-run-'+n+'.png')),
+    jump:loadArt('assets/frames/player-jump.png'),
+    crouch:loadArt('assets/frames/player-crouch.png'),
+    shoot:[1,2,3].map(n=>loadArt('assets/frames/player-shoot-'+n+'.png')),
+    hit:loadArt('assets/frames/player-hit.png'),
+    death:loadArt('assets/frames/player-death.png')
+  },
+  slug:loadArt('assets/frames/slug-medium.png'),
+  enemies: {
+    nullptr:loadArt('assets/frames/enemy-null.png'),
+    memleak:loadArt('assets/frames/enemy-orb.png'),
+    infloop:loadArt('assets/frames/enemy-dragon.png'),
+    racecond:loadArt('assets/frames/enemy-dragon.png'),
+    stackov:loadArt('assets/frames/enemy-brute.png'),
+    deprecated:loadArt('assets/frames/enemy-turret.png'),
+    segfault:loadArt('assets/frames/enemy-null.png')
+  },
+  bosses: {
+    gate1:loadArt('assets/frames/boss-gate.png'),
+    hydra:loadArt('assets/frames/boss-hydra.png'),
+    halluc:loadArt('assets/frames/boss-halluc.png')
+  }
+};
+let terrainPattern = null;
+function getTerrainPattern(){
+  if(terrainPattern || !artReady(ART.terrain)) return terrainPattern;
+  const tile=document.createElement('canvas'); tile.width=64; tile.height=40;
+  const tctx=tile.getContext('2d'); tctx.imageSmoothingEnabled=false;
+  tctx.drawImage(ART.terrain,0,0,64,40);
+  terrainPattern=ctx.createPattern(tile,'repeat');
+  return terrainPattern;
+}
+function drawArtAtFeet(img, centerX, feetY, targetHeight, flip=false, alpha=1){
+  if(!artReady(img)) return false;
+  const ratio = img.naturalWidth/Math.max(1,img.naturalHeight);
+  const dw = targetHeight*ratio, dh = targetHeight;
+  ctx.save(); ctx.globalAlpha=alpha;
+  if(flip){
+    ctx.translate(centerX+dw/2, feetY-dh); ctx.scale(-1,1);
+    ctx.drawImage(img,0,0,dw,dh);
+  } else {
+    ctx.drawImage(img,centerX-dw/2,feetY-dh,dw,dh);
+  }
+  ctx.restore();
+  return true;
+}
+
+function drawParallax(){
+  const bg = ART && ART.backgrounds[stageNum];
+  if(artReady(bg)){
+    // Render one oversize panoramic plate rather than repeating the image.
+    // This keeps the hand-painted skyline continuous while the camera adds
+    // a restrained parallax drift across the long stage.
+    const bgW=CFG.W*1.5, bgH=CFG.H;
+    const restingOffset=(CFG.W-bgW)*0.5;
+    const offset = clamp(restingOffset-camera.x*0.16, CFG.W-bgW, 0);
+    ctx.drawImage(bg,offset,0,bgW,bgH);
+    const shade=ctx.createLinearGradient(0,0,0,CFG.H);
+    shade.addColorStop(0,'rgba(7,10,24,0.10)');
+    shade.addColorStop(0.72,'rgba(7,10,24,0.02)');
+    shade.addColorStop(1,'rgba(4,5,12,0.30)');
+    ctx.fillStyle=shade; ctx.fillRect(0,0,CFG.W,CFG.H);
+    return;
+  }
+  ctx.fillStyle='#111629'; ctx.fillRect(0,0,CFG.W,CFG.H);
+  ctx.fillStyle='#242438';
+  for(let i=0;i<8;i++){
+    const bx = ((i*140 - camera.x*0.3) % (CFG.W+140) + (CFG.W+140)) % (CFG.W+140) - 70;
+    ctx.fillRect(bx, 60, 40, 130);
+  }
+  ctx.fillStyle='#2c2c44';
+  for(let i=0;i<10;i++){
+    const bx = ((i*100 - camera.x*0.6) % (CFG.W+100) + (CFG.W+100)) % (CFG.W+100) - 50;
+    ctx.fillRect(bx, 100, 26, 100);
+  }
+}
+function drawConveyors(){
+  const t = performance.now ? (Date.now()/80) : 0;
+  for(const c of conveyors){
+    const sx = c.x-camera.x, sy = c.y-camera.y;
+    ctx.fillStyle = '#333';
+    ctx.fillRect(sx, sy, c.w, 6);
+    ctx.fillStyle = '#8a9a4a';
+    const stripeW = 10, offset = ((t*(c.push>0?1:-1))%stripeW+stripeW)%stripeW;
+    for(let x=-stripeW+offset; x<c.w; x+=stripeW){
+      ctx.fillRect(sx+x, sy, 5, 6);
+    }
+  }
+}
+function drawTerrain(){
+  for(const t of terrain){
+    const sx=t.x-camera.x, sy=t.y-camera.y;
+    const pattern=getTerrainPattern();
+    ctx.fillStyle=pattern||'#252735';
+    ctx.fillRect(sx,sy,t.w,t.h);
+    ctx.fillStyle='#D97757'; ctx.globalAlpha=0.78; ctx.fillRect(sx,sy,t.w,2);
+    ctx.fillStyle='#111629'; ctx.globalAlpha=0.72; ctx.fillRect(sx,sy+3,t.w,2);
+    ctx.globalAlpha=1;
+  }
+}
+function drawSlug(){
+  if(!slug || !slug.active) return;
+  const sx = Math.round(slug.x-camera.x), sy = Math.round(slug.y-camera.y);
+  if(drawArtAtFeet(ART.slug,sx,sy+5,36,player.facing<0)){
+    if(slug.flash>0){
+      ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.45;
+      ctx.fillStyle='#ffe8bf'; ctx.fillRect(sx-24,sy-32,48,28); ctx.restore();
+    }
+    return;
+  }
+  const spr = slug.flash>0 ? SPR.slugFlash : SPR.slug;
+  ctx.drawImage(spr, sx-Math.floor(spr.width/2), sy-spr.height+3);
+}
+function drawPlayer(){
+  if(!player.alive || player.riding) return;
+  if(player.invincible>0 && Math.floor(player.invincible/4)%2===0) return;
+  const sx = Math.round(player.x-camera.x), sy = Math.round(player.y-camera.y);
+  let art = null, artHeight = 31;
+  if(player.hitTimer>0){ art=ART.player.hit; artHeight=31; }
+  else if(player.attackTimer>0){ art=ART.player.shoot[Math.floor(player.attackTimer/2)%ART.player.shoot.length]; artHeight=31; }
+  else if(player.state==='crouch'){ art=ART.player.crouch; artHeight=27; }
+  else if(player.state==='jump'){ art=ART.player.jump; artHeight=34; }
+  else if(player.state==='run'){ art=ART.player.run[player.runFrame%ART.player.run.length]; artHeight=32; }
+  else { art=ART.player.idle; artHeight=32; }
+  if(drawArtAtFeet(art,sx,sy+2,artHeight,player.facing<0)) return;
+  let spr;
+  const useFlash = player.hitTimer>0 && Math.floor(player.hitTimer/3)%2===0;
+  if(player.state==='crouch') spr = player.facing>0?SPR.playerCrouch:SPR.playerCrouchL;
+  else if(player.state==='jump') spr = player.facing>0?SPR.playerJump:SPR.playerJumpL;
+  else if(player.state==='run') spr = player.facing>0?SPR.playerRun[player.runFrame%SPR.playerRun.length]:SPR.playerRunL[player.runFrame%SPR.playerRunL.length];
+  else spr = player.facing>0?SPR.playerIdle:SPR.playerIdleL;
+  if(useFlash) spr = player.facing>0?SPR.playerFlash:SPR.playerFlashL;
+  ctx.drawImage(spr, sx-Math.floor(spr.width/2), sy-spr.height+2);
+
+  if(player.hitTimer<=0){
+    const gx = sx + Math.round(player.aim.x*7);
+    const gy = sy-8 + Math.round(player.aim.y*6);
+    const g = SPR.gun[player.aim.snapKey];
+    if(g) ctx.drawImage(g, gx-2, gy-2);
+  }
+}
+function drawEnemies(){
+  for(const en of enemies){
+    if(!en.active) continue;
+    const sx = Math.round(en.x-camera.x), sy=Math.round(en.y-camera.y);
+    if(sx<-20||sx>CFG.W+20) continue;
+    const art = ART.enemies[en.type];
+    const artHeight = en.type==='stackov'||en.type==='deprecated'?24:(en.type==='infloop'||en.type==='racecond'?20:16);
+    if(drawArtAtFeet(art,sx,sy,artHeight,en.facing<0)){
+      if(en.flash>0){
+        ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.5;
+        ctx.fillStyle='#fff4d6'; ctx.fillRect(sx-artHeight/2,sy-artHeight,artHeight,artHeight*0.75); ctx.restore();
+      }
+      continue;
+    }
+    let spr;
+    if(en.type==='nullptr') spr = en.flash>0?SPR.npBugFlash:(en.facing>0?SPR.npBug:SPR.npBugL);
+    else if(en.type==='segfault') spr = en.flash>0?SPR.sfBugFlash:(en.facing>0?SPR.sfBug:SPR.sfBugL);
+    else if(en.type==='infloop') spr = en.flash>0?SPR.ilBugFlash:SPR.ilBug;
+    else if(en.type==='stackov') spr = en.flash>0?SPR.stackovFlash:(en.facing>0?SPR.stackov:SPR.stackovL);
+    else if(en.type==='memleak') spr = en.flash>0?SPR.memleakFlash:(en.facing>0?SPR.memleak:SPR.memleakL);
+    else if(en.type==='deprecated') spr = en.flash>0?SPR.deprecatedFlash:SPR.deprecated;
+    else spr = en.flash>0?SPR.racecondFlash:(en.facing>0?SPR.racecond:SPR.racecondL);
+    ctx.drawImage(spr, sx-Math.floor(spr.width/2), sy-spr.height);
+  }
+}
+function drawBoss(){
+  if(!boss || !boss.active) return;
+  const bossArt = ART.bosses[boss.type];
+  if(artReady(bossArt)){
+    const sx=Math.round(boss.x-camera.x), sy=Math.round(boss.y-camera.y);
+    const targetHeight = boss.type==='gate1'?78:(boss.type==='hydra'?84:88);
+    if(boss.type==='halluc' && boss.decoyOffsets){
+      for(const off of boss.decoyOffsets) drawArtAtFeet(bossArt,sx+off,sy+4,targetHeight*0.82,false,0.16);
+    }
+    drawArtAtFeet(bossArt,sx,sy+4,targetHeight,player.facing<0);
+    if(boss.flash>0){
+      ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.globalAlpha=0.42;
+      ctx.fillStyle='#fff2c7'; ctx.fillRect(sx-targetHeight*0.7,sy-targetHeight,targetHeight*1.4,targetHeight*0.85); ctx.restore();
+    }
+    return;
+  }
+  if(boss.type==='halluc' && boss.decoyOffsets){
+    for(const off of boss.decoyOffsets){
+      const dx = Math.round(boss.x+off-camera.x), dy = Math.round(boss.y-camera.y);
+      const dw = SPR.hallucDecoy.width*boss.scale, dh = SPR.hallucDecoy.height*boss.scale;
+      ctx.drawImage(SPR.hallucDecoy, dx-Math.floor(dw/2), dy-dh, dw, dh);
+    }
+  }
+  const sx = Math.round(boss.x-camera.x), sy = Math.round(boss.y-camera.y);
+  let spr;
+  if(boss.type==='gate1') spr = boss.vulnerable ? SPR.gate1 : SPR.gate1Armored;
+  else if(boss.type==='hydra') spr = boss.vulnerable ? SPR.hydra : SPR.hydraArmored;
+  else spr = SPR.halluc;
+  if(boss.flash>0){
+    if(boss.type==='gate1') spr = SPR.gate1Flash;
+    else if(boss.type==='hydra') spr = SPR.hydraFlash;
+    else spr = SPR.hallucFlash;
+  }
+  const dw = spr.width*boss.scale, dh = spr.height*boss.scale;
+  ctx.drawImage(spr, sx-Math.floor(dw/2), sy-dh, dw, dh);
+}
+function drawBossGauge(){
+  if(!boss || !boss.active) return;
+  const w = CFG.W-40, x=20, y=CFG.H-14;
+  ctx.fillStyle='#000'; ctx.fillRect(x-1,y-1,w+2,7);
+  ctx.fillStyle='#442222'; ctx.fillRect(x,y,w,5);
+  ctx.fillStyle = boss.vulnerable ? '#ff5566' : '#8899aa';
+  ctx.fillRect(x,y,Math.max(0,w*(boss.hp/boss.maxHp)),5);
+  ctx.fillStyle='#fff'; ctx.font='7px monospace'; ctx.textAlign='center';
+  ctx.fillText(boss.name, CFG.W/2, y-3);
+}
+function drawBullets(){
+  ctx.fillStyle='#ffe27a';
+  for(const b of bullets){ if(b.active) ctx.fillRect(Math.round(b.x-camera.x)-1, Math.round(b.y-camera.y)-1, 2,2); }
+  ctx.fillStyle='#ff6688';
+  for(const b of enemyBullets){ if(b.active) ctx.fillRect(Math.round(b.x-camera.x)-1, Math.round(b.y-camera.y)-1, 2,2); }
+  ctx.fillStyle='#8a9a4a';
+  for(const g of grenades){ if(g.active) ctx.fillRect(Math.round(g.x-camera.x)-1, Math.round(g.y-camera.y)-1, 3,3); }
+}
+function drawItems(){
+  for(const it of items){
+    if(!it.active) continue;
+    const sx = Math.round(it.x-camera.x), sy=Math.round(it.y-camera.y);
+    if(sx<-20||sx>CFG.W+20) continue;
+    const spr = it.flash>0 ? SPR.crateFlash : SPR.crate;
+    ctx.drawImage(spr, sx-Math.floor(spr.width/2), sy-spr.height);
+  }
+}
+function drawPows(){
+  for(const p of pows){
+    if(!p.active || p.freed) continue;
+    const sx = Math.round(p.x-camera.x), sy=Math.round(p.y-camera.y);
+    if(sx<-20||sx>CFG.W+20) continue;
+    ctx.drawImage(SPR.pow, sx-Math.floor(SPR.pow.width/2), sy-SPR.pow.height);
+  }
+}
+function drawFx(){
+  for(const p of particles){
+    if(!p.active) continue;
+    ctx.globalAlpha = Math.max(0,p.life/p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(Math.round(p.x-camera.x), Math.round(p.y-camera.y), p.size, p.size);
+  }
+  ctx.globalAlpha=1;
+  ctx.font='8px monospace'; ctx.textAlign='center';
+  for(const p of popups){
+    if(!p.active) continue;
+    ctx.fillStyle='#ffe27a';
+    ctx.fillText(p.text, Math.round(p.x-camera.x), Math.round(p.y-camera.y));
+  }
+  ctx.save();
+  ctx.globalCompositeOperation='lighter';
+  for(const burst of combatBursts){
+    const x=burst.x-camera.x, y=burst.y-camera.y;
+    const life=burst.life/burst.maxLife;
+    if(burst.kind==='explosion'){
+      const r=(1-life)*24+4;
+      ctx.globalAlpha=life;
+      ctx.strokeStyle='#FFE79B'; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,r,0,Math.PI*2); ctx.stroke();
+      ctx.strokeStyle='#F26D49'; ctx.lineWidth=1;
+      for(let i=0;i<8;i++){ const a=i*Math.PI/4; ctx.beginPath(); ctx.moveTo(x+Math.cos(a)*r*0.6,y+Math.sin(a)*r*0.6); ctx.lineTo(x+Math.cos(a)*r*1.35,y+Math.sin(a)*r*1.35); ctx.stroke(); }
+    } else {
+      const len=burst.kind==='tank-muzzle'?14:8+life*4;
+      ctx.globalAlpha=life;
+      ctx.strokeStyle=burst.kind==='tank-muzzle'?'#F2A181':'#FFE79B'; ctx.lineWidth=burst.kind==='tank-muzzle'?4:2;
+      ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+burst.dx*len,y+burst.dy*len); ctx.stroke();
+      ctx.fillStyle='#fff5d6'; ctx.beginPath(); ctx.arc(x+burst.dx*len,y+burst.dy*len,burst.kind==='tank-muzzle'?4:2,0,Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.restore();
+  ctx.globalCompositeOperation='source-over';
+}
+function drawOnboarding(){
+  if(!onboarding.active || !onboarding.current) return;
+  const card = onboarding.current;
+  ctx.save();
+  ctx.fillStyle='rgba(5,7,14,0.82)';
+  ctx.fillRect(0,0,CFG.W,CFG.H);
+  const x=18, y=14, w=348, h=188;
+  ctx.fillStyle='#111629'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#D97757'; ctx.lineWidth=2; ctx.strokeRect(x+1,y+1,w-2,h-2);
+  ctx.fillStyle='#F2A181'; ctx.fillRect(x+8,y+8,4,18);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#F2A181'; ctx.font='7px monospace'; ctx.fillText(card.kicker, x+20, y+15);
+  ctx.fillStyle='#fff'; ctx.font='bold 12px monospace'; ctx.fillText(card.title, x+20, y+32);
+  ctx.fillStyle='#c9cedd'; ctx.font='7px monospace';
+  let bodyY=y+48;
+  const words=card.body.split(' '); let line='';
+  for(const word of words){
+    const next=line?line+' '+word:word;
+    if(ctx.measureText(next).width>310 && line){ ctx.fillText(line,x+20,bodyY); bodyY+=9; line=word; }
+    else line=next;
+  }
+  if(line){ ctx.fillText(line,x+20,bodyY); bodyY+=10; }
+  const rowsY=Math.max(y+73,bodyY+3);
+  card.rows.forEach((row,i)=>{
+    const ry=rowsY+i*18;
+    ctx.fillStyle='#2b3044'; ctx.fillRect(x+12,ry-10,w-24,15);
+    ctx.fillStyle='#FFE79B'; ctx.font='bold 7px monospace'; ctx.fillText(row[0],x+20,ry);
+    ctx.fillStyle='#e5e8f0'; ctx.font='7px monospace'; ctx.fillText(row[1],x+124,ry);
+  });
+  ctx.fillStyle='#8e96aa'; ctx.font='6px monospace'; ctx.textAlign='center'; ctx.fillText(card.hint,CFG.W/2,y+h-8);
+  ctx.restore();
+}
+function drawHUD(){
+  ctx.textAlign='left'; ctx.font='8px monospace';
+  ctx.fillStyle='#fff';
+  ctx.fillText('SCORE '+String(score).padStart(7,'0'), 6, 12);
+  ctx.fillText('HI '+String(hiScore).padStart(7,'0'), 130, 12);
+  ctx.font='6px monospace';
+  ctx.fillText('STAGE '+stageNum+' '+STAGE_NAMES[stageNum-1], CFG.W-110, 12);
+  for(let i=0;i<player.lives;i++){
+    ctx.fillStyle='#D97757';
+    ctx.fillText('*', 6+i*10, 24);
+  }
+  const wdef = WEAPONS[player.weapon];
+  ctx.fillStyle='#ffe27a';
+  const wtxt = wdef.infinite ? 'PROMPT INF' : (wdef.code+' '+player.ammo);
+  ctx.fillText(wtxt, 250, 12);
+  ctx.fillStyle='#8a9a4a';
+  ctx.fillText('*'+player.grenades, 250, 24);
+  if(player.riding && slug){
+    ctx.fillStyle='#80c0e0';
+    ctx.fillText('TANK '+'#'.repeat(slug.durability)+'-'.repeat(SLUG_MAX_DUR-slug.durability), 250, 36);
+  }
+}
+function drawTitle(){
+  drawParallax();
+  ctx.fillStyle='#D97757'; ctx.font='bold 22px monospace'; ctx.textAlign='center';
+  ctx.fillText('CURSOR SLUG', CFG.W/2, 80);
+  ctx.fillStyle='#fff'; ctx.font='9px monospace';
+  ctx.fillText('PRESS ANY KEY OR CLICK', CFG.W/2, 130);
+  ctx.font='7px monospace'; ctx.fillStyle='#aaa';
+  ctx.fillText('ARROWS MOVE  Z JUMP  X SHOOT  MOUSE AIM', CFG.W/2, 150);
+  ctx.fillText('HI-SCORE '+hiScore, CFG.W/2, 165);
+}
+function drawGameOver(){
+  ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,CFG.W,CFG.H);
+  ctx.fillStyle='#ff5555'; ctx.font='bold 20px monospace'; ctx.textAlign='center';
+  ctx.fillText('GAME OVER', CFG.W/2, 90);
+  ctx.fillStyle='#fff'; ctx.font='9px monospace';
+  ctx.fillText('SCORE '+score, CFG.W/2, 115);
+  if(score>=hiScore && score>0){
+    ctx.fillStyle='#ffe27a'; ctx.fillText('NEW RECORD!', CFG.W/2, 130);
+  }
+  ctx.fillStyle='#aaa'; ctx.font='7px monospace';
+  ctx.fillText('PRESS R OR CLICK RESTART', CFG.W/2, 150);
+}
+function drawStageClear(){
+  drawParallax();
+  ctx.fillStyle='#7fffb0'; ctx.font='bold 18px monospace'; ctx.textAlign='center';
+  ctx.fillText('MISSION COMPLETE', CFG.W/2, 80);
+  ctx.fillStyle='#fff'; ctx.font='9px monospace';
+  ctx.fillText('SIGKILL BONUS +'+stageClearBonus, CFG.W/2, 105);
+  ctx.fillText('SCORE '+score, CFG.W/2, 120);
+  if(stageClearTimer<=0){
+    ctx.fillStyle='#ffe27a'; ctx.font='7px monospace';
+    ctx.fillText('PRESS ANY KEY OR CLICK TO CONTINUE', CFG.W/2, 145);
+  }
+}
+function drawEnding(){
+  drawParallax();
+  ctx.fillStyle='#D97757'; ctx.font='bold 18px monospace'; ctx.textAlign='center';
+  ctx.fillText('MISSION ACCOMPLISHED', CFG.W/2, 80);
+  ctx.fillStyle='#fff'; ctx.font='9px monospace';
+  ctx.fillText('FINAL SCORE '+score, CFG.W/2, 105);
+  ctx.fillText('HI-SCORE '+hiScore, CFG.W/2, 120);
+  ctx.fillStyle='#aaa'; ctx.font='7px monospace';
+  ctx.fillText('THANK YOU FOR PLAYING', CFG.W/2, 140);
+  ctx.fillText('PRESS R OR CLICK RESTART', CFG.W/2, 155);
+}
+
+function render(){
+  ctx.save();
+  if(shakeTime>0){
+    ctx.translate((Math.random()-0.5)*shakeMag, (Math.random()-0.5)*shakeMag);
+  }
+  if(scene==='TITLE'){
+    drawTitle();
+  } else if(scene==='STAGECLEAR'){
+    drawStageClear();
+  } else if(scene==='ENDING'){
+    drawEnding();
+  } else {
+    drawParallax();
+    drawTerrain();
+    drawConveyors();
+    drawItems();
+    drawPows();
+    drawEnemies();
+    drawBoss();
+    drawSlug();
+    drawPlayer();
+    drawBullets();
+    drawFx();
+    drawHUD();
+    drawBossGauge();
+    if(scene==='GAMEOVER') drawGameOver();
+  }
+  ctx.restore();
+  if(onboarding.active) drawOnboarding();
+}
+
+/* ============================= §13 LOOP =================================== */
+let lastTime = performance.now();
+let accumulator = 0;
+function update(){
+  if(scene!=='PLAY') return;
+  if(onboarding.active){ Input.justDown = {}; Input.mouseRightJustDown = false; return; }
+  if(bossEntryGrace>0) bossEntryGrace--;
+  updatePlayer();
+  checkBossTrigger();
+  updateBoss();
+  updateEnemies();
+  updateSpawns();
+  updateItemSpawns();
+  updateItems();
+  updatePowSpawns();
+  updatePows();
+  updateBullets();
+  updateFx();
+}
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = now-lastTime; lastTime=now;
+  if(dt>250) dt=250;
+  if(hitstop>0){ hitstop--; render(); return; }
+  accumulator += dt;
+  while(accumulator>=CFG.FIXED_DT){
+    if(scene==='PLAY') updateCamera();
+    update();
+    if(scene==='STAGECLEAR' && stageClearTimer>0) stageClearTimer--;
+    accumulator -= CFG.FIXED_DT;
+  }
+  render();
+}
+buildSprites();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
