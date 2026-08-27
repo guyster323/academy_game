@@ -1,2 +1,6 @@
 .superpowers/
 .claude/
+
+# trailer recording work files (see scripts/record-trailer.mjs)
+scripts/.rec/
+recordings/

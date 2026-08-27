@@ -387,6 +387,13 @@ const Input = {
   mouseX:0, mouseY:0, mouseDown:false, mouseRightDown:false, mouseRightJustDown:false,
   aimMode: 'keyboard'
 };
+
+/* Attract-mode flag. Only ON when the page is opened with ?demo=1 or #demo.
+   Nothing below the §DEMO block runs unless demoActive is true, so normal
+   play at index.html is completely unaffected. Any real key/click hands
+   control straight back to the player (see §DEMO). */
+const DEMO_ON = /(?:^|[?&])demo=1(?:&|$)/.test(location.search) || location.hash === '#demo';
+let demoActive = DEMO_ON;
 const ONBOARDING_STORAGE_KEY = 'cursorSlugOnboarding:v1';
 const onboarding = { active:false, queue:[], current:null, seen:new Set() };
 try{
@@ -1140,8 +1147,10 @@ function spawnBoss(type, x, y){
 }
 function bossTakeDamage(dmg, hx, hy){
   if(!boss || !boss.active || boss.dying || !boss.vulnerable) return;
-  boss.hp -= dmg; boss.flash=6;
+  boss.flash=6;
   spawnParticles(hx,hy,'#ffcc55',4);
+  if(demoActive && boss._demoTuned) return;   // reel: HP follows a scripted ramp, hits stay cosmetic
+  boss.hp -= dmg;
   if(boss.hp<=0){
     boss.hp=0; boss.dying=true; boss.deathTimer=90;
   }
@@ -1806,7 +1815,7 @@ function drawSlug(){
 }
 function drawPlayer(){
   if(!player.alive || player.riding) return;
-  if(player.invincible>0 && Math.floor(player.invincible/4)%2===0) return;
+  if(!demoActive && player.invincible>0 && Math.floor(player.invincible/4)%2===0) return;
   const sx = Math.round(player.x-camera.x), sy = Math.round(player.y-camera.y);
   let art = null, artHeight = 31;
   if(player.hitTimer>0){ art=ART.player.hit; artHeight=31; }
@@ -2093,6 +2102,7 @@ function render(){
   }
   ctx.restore();
   if(onboarding.active) drawOnboarding();
+  if(demoActive) drawDemoOverlay();
 }
 
 /* ============================= §13 LOOP =================================== */
@@ -2100,6 +2110,11 @@ let lastTime = performance.now();
 let accumulator = 0;
 function update(){
   if(scene!=='PLAY') return;
+  if(demoActive){
+    player.lives = Math.max(player.lives, 3);
+    if(player.invincible < 20) player.invincible = 40;
+    demoDrive();
+  }
   if(onboarding.active){ Input.justDown = {}; Input.mouseRightJustDown = false; return; }
   if(bossEntryGrace>0) bossEntryGrace--;
   updatePlayer();
@@ -2116,6 +2131,7 @@ function update(){
 }
 function frame(now){
   requestAnimationFrame(frame);
+  if(demoActive) demoAutoScene();
   let dt = now-lastTime; lastTime=now;
   if(dt>250) dt=250;
   if(hitstop>0){ hitstop--; render(); return; }
@@ -2128,6 +2144,145 @@ function frame(now){
   }
   render();
 }
+
+/* ============================= §DEMO / ATTRACT MODE ===================== */
+/* Everything here is inert unless the page was opened with ?demo=1 (or #demo).
+   It only writes to Input / scene transitions the same way a player would,
+   plus keeps lives pinned so a showcase reel never ends on GAME OVER.
+   The moment a real key or mouse button is pressed, demoActive flips off and
+   the game is a 100% normal, hand-played build again. */
+if(DEMO_ON){
+  const st = document.createElement('style');
+  st.textContent = '#game{width:100vw!important;height:100vh!important;box-shadow:none!important}#restartBtn{display:none!important}';
+  document.head.appendChild(st);
+  const tag = document.createElement('div');
+  tag.id = 'demoTag';
+  tag.textContent = '▶ ATTRACT MODE — press any key to play';
+  tag.style.cssText = 'position:fixed;left:14px;bottom:12px;z-index:20;pointer-events:none;'
+    + 'font:12px/1 monospace;letter-spacing:1px;color:#ffe27a;opacity:.72;text-shadow:0 1px 3px #000';
+  document.body.appendChild(tag);
+  queueOnboarding = function(){};      // no blocking tutorial popups in the reel
+  onboarding.active = false;
+  const handOver = function(){
+    if(!demoActive) return;
+    demoActive = false;
+    player.lives = 3; player.invincible = 90;   // clean slate for the human
+    Input.keys = {}; Input.justDown = {};
+    const t = document.getElementById('demoTag'); if(t) t.remove();
+  };
+  window.addEventListener('keydown', handOver, true);
+  window.addEventListener('mousedown', handOver, true);
+  window.__demo = {   // read-only probe for the recording script / debugging
+    get scene(){ return scene; },
+    get stage(){ return stageNum; },
+    get x(){ return Math.round(player.x); },
+    get lives(){ return player.lives; },
+    get weapon(){ return player.weapon; },
+    get boss(){ return boss ? { active: boss.active, dying: !!boss.dying, hp: Math.round(boss.hp), max: boss.maxHp, type: boss.type } : null; },
+    get active(){ return demoActive; }
+  };
+}
+
+let demoTitleT = 0, demoEndT = 0;
+function demoAutoScene(){
+  if(!demoActive) return;
+  if(scene === 'TITLE'){ if(++demoTitleT > 96) resetGame(); return; }
+  demoTitleT = 0;
+  if(scene === 'STAGECLEAR' && stageClearTimer <= 0) advanceStage();
+  else if(scene === 'ENDING'){ if(++demoEndT > 210){ demoEndT = 0; resetGame(); } }
+  else demoEndT = 0;
+}
+
+let demoT = 0, demoStuckX = 0, demoStuckN = 0, demoJumpCd = 0, demoNadeCd = 0, demoWpnStage = -1;
+function demoThreat(){
+  let best = null, bd = 1e9;
+  for(const e of enemies){
+    if(!e.active) continue;
+    if(e.x < player.x - 44) continue;
+    const d = Math.hypot(e.x - player.x, e.y - player.y);
+    if(d < bd){ bd = d; best = e; }
+  }
+  return best;
+}
+function demoBulletNear(){
+  for(const b of enemyBullets){
+    if(!b.active) continue;
+    if(Math.abs(b.x - player.x) < 30 && Math.abs(b.y - (player.y - 10)) < 22 && (b.x - player.x) * b.vx < 0) return true;
+  }
+  return false;
+}
+function demoDrive(){
+  if(!demoActive || scene !== 'PLAY') return;
+  demoT++;
+  const K = Input.keys;
+  K.ArrowRight = K.ArrowLeft = K.ArrowUp = K.ArrowDown = K.KeyX = false;
+  Input.aimMode = 'keyboard';
+  K.KeyX = true;   // hold fire
+
+  const B = (typeof boss !== 'undefined') ? boss : null;
+  const inBoss = bossFightActive && B && B.active && !B.dying;
+
+  if(inBoss){
+    if(!B._demoTuned){ B._demoTuned = true; B._demoT = 0; if(WEAPONS.L) collectWeapon('L'); }
+    B._demoT++;
+    // Pace every boss fight to ~8s of action then a scripted finish, so the reel
+    // is predictable regardless of how well the bot aims. Real hits still count
+    // and can drain it faster; the ramp only guarantees forward progress.
+    const FIGHT = 520;
+    if(!B.dying) B.hp = B.maxHp * Math.max(0.001, 1 - B._demoT / FIGHT);
+    if(B._demoT >= FIGHT && !B.dying){ B.hp = 0; B.dying = true; B.deathTimer = 90; }
+    const gap = B.x - player.x;
+    if(gap > 108) K.ArrowRight = true;
+    else if(gap < 82) K.ArrowLeft = true;
+    else if(Math.floor(demoT / 30) % 2 === 0) K.ArrowRight = true; else K.ArrowLeft = true;
+    if((B.y - B.hh) < (player.y - 18) && Math.floor(demoT / 42) % 2 === 0) K.ArrowUp = true;
+    if(player.onGround && demoJumpCd <= 0 && demoBulletNear()){ Input.justDown.Space = true; demoJumpCd = 38; }
+    if(demoNadeCd <= 0){ Input.justDown.KeyC = true; demoNadeCd = 230; }
+  } else {
+    K.ArrowRight = true;
+    const thr = demoThreat();
+    if(thr && (thr.y - player.y) < -14) K.ArrowUp = true;
+    const blocked = (player.x - demoStuckX) < 0.25;
+    const enemyAhead = thr && (thr.x - player.x) < 32 && (thr.x - player.x) > -8;
+    if(player.onGround && demoJumpCd <= 0 && (blocked || enemyAhead || demoBulletNear() || demoT % 168 === 0)){
+      Input.justDown.Space = true; demoJumpCd = 26;
+    }
+    let cluster = 0;
+    for(const e of enemies) if(e.active && Math.abs(e.x - player.x) < 72) cluster++;
+    if(cluster >= 3 && demoNadeCd <= 0){ Input.justDown.KeyC = true; demoNadeCd = 170; }
+    if(stageNum !== demoWpnStage && player.x > 380){
+      const pick = stageNum === 1 ? 'S' : stageNum === 2 ? 'F' : 'R';
+      if(WEAPONS[pick]){ collectWeapon(pick); demoWpnStage = stageNum; }
+    }
+  }
+
+  if((player.x - demoStuckX) > 0.25){ demoStuckX = player.x; demoStuckN = 0; }
+  else if(++demoStuckN > 168 && !inBoss){ player.vx = Math.max(player.vx, 1.5); demoStuckN = 110; }
+  if(demoJumpCd > 0) demoJumpCd--;
+  if(demoNadeCd > 0) demoNadeCd--;
+}
+
+let demoCardT = 0, demoCardN = 0;
+function drawDemoOverlay(){
+  if(scene === 'PLAY' && demoCardN !== stageNum){ demoCardN = stageNum; demoCardT = 168; }
+  if(demoCardT > 0){
+    demoCardT--;
+    const a = Math.min(1, demoCardT / 26) * Math.min(1, (168 - demoCardT) / 18);
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'rgba(8,10,18,0.62)';
+    ctx.fillRect(0, CFG.H / 2 - 17, CFG.W, 34);
+    ctx.fillStyle = '#D97757'; ctx.strokeStyle = 'rgba(217,119,87,0.5)';
+    ctx.fillRect(0, CFG.H / 2 - 17, CFG.W, 1); ctx.fillRect(0, CFG.H / 2 + 16, CFG.W, 1);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe27a'; ctx.font = 'bold 11px monospace';
+    ctx.fillText('STAGE ' + stageNum, CFG.W / 2, CFG.H / 2 - 3);
+    ctx.fillStyle = '#fff'; ctx.font = '7px monospace';
+    ctx.fillText(STAGE_NAMES[stageNum - 1], CFG.W / 2, CFG.H / 2 + 9);
+    ctx.restore();
+  }
+}
+
 buildSprites();
 requestAnimationFrame(frame);
 </script>

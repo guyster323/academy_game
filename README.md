@@ -4,6 +4,20 @@
 
 `CURSOR SLUG`는 커서 오퍼레이터가 되어 화면을 점령한 버그들을 소탕하는 **Metal Slug풍 픽셀 런앤건**입니다. 사막 폐허에서 시작해 메모리 동굴과 커널 요새까지 돌파하고, `nullptr`부터 `HALLUCINATION`까지 이름만 들어도 불길한 디버깅 악몽을 정면으로 상대하세요.
 
+<p align="center">
+  <a href="https://guyster323.github.io/academy_game/">
+    <img src="assets/trailer/cursor-slug-hero.gif" width="760" alt="CURSOR SLUG 게임플레이 — NULL POINTER GATE 보스전">
+  </a>
+</p>
+
+<p align="center">
+  <a href="assets/trailer/cursor-slug-trailer.mp4"><b>▶ 트레일러 영상 (MP4 · 약 50초)</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://guyster323.github.io/academy_game/?demo=1">브라우저에서 데모 자동 재생 보기</a>
+</p>
+
+> 위 영상은 게임의 **어트랙트 모드**를 그대로 녹화한 것입니다 — 3개 스테이지, 보스전, 무기 이펙트, 탱크 탑승까지 손대지 않고 흘러갑니다.
+
 ## ▶ 지금 바로 플레이하기
 
 **다운로드도, 설치도 필요 없습니다.** 아래 링크만 클릭하면 브라우저에서 바로 게임이 시작됩니다.
@@ -20,6 +34,7 @@
 - **5종 코드 무기** — 빠른 탄막부터 관통 레이저까지 상황에 맞춰 교체
 - **탈것 “the slug”** — 포탄을 쏘며 전장을 밀어붙이는 탱크
 - **384×216 픽셀 캔버스** — 선명한 도트 그래픽과 브라우저 합성 사운드
+- **어트랙트 모드** — 주소 뒤에 `?demo=1` 을 붙이면 게임이 알아서 플레이되는 시연 모드가 돌아갑니다. 아무 키나 누르면 즉시 일반 플레이로 전환됩니다.
 
 ## 스크린샷
 
