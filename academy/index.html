@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>CURSOR SLUG 스토리 재료</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="STEP 3 PoC 제출용 — CURSOR SLUG 어트랙트 모드 트레일러 작업의 불편했던 장면·정한 규칙·해보니 어땠나 + 제출 직전 점검 7항목.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0e0f15">
+<meta property="og:title" content="CURSOR SLUG 스토리 재료">
+<meta property="og:description" content="STEP 3 · PoC 완성 — 13교시 스토리 재료 3가지 + 제출 직전 점검 7항목.">
+<meta property="og:image" content="https://guyster323.github.io/academy_game/assets/trailer/poster.png">
+<meta property="og:type" content="article">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;700&family=Nanum+Gothic+Coding:wght@400;700&family=IBM+Plex+Sans+KR:wght@400;500;600&display=swap">
+
+<style>
+  :root{
+    --ground:#0e0f15;
+    --panel:#161821;
+    --panel-2:#1c1f2a;
+    --edge:#2b2f3d;
+    --ink:#e9e5dc;
+    --muted:#8b90a0;
+    --accent:#d97757;      /* the game's own terracotta (index.html) */
+    --link:#ec9a7c;
+    --spark:#ffe27a;       /* the game's popup yellow — used sparingly */
+    --ok:#68d3a2;          /* semantic pass state, not the accent */
+    --cavern:#4fd0c0;      /* stage-2 crystal teal — one accent only */
+    --disp:"Press Start 2P","JetBrains Mono",ui-monospace,monospace;
+    --mono:"JetBrains Mono","Nanum Gothic Coding",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --body:"IBM Plex Sans KR","IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  }
+
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    font-family:var(--body);
+    font-size:16px;
+    line-height:1.65;
+    color:var(--ink);
+    background:radial-gradient(130% 90% at 50% -10%, #15171f 0%, var(--ground) 58%, #0a0b10 100%);
+    background-attachment:fixed;
+    padding:clamp(1rem,4vw,3rem) clamp(1rem,4vw,2rem) 4rem;
+  }
+  .scanlines{
+    position:fixed;inset:0;pointer-events:none;z-index:1;
+    background:repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px);
+  }
+
+  .cab{
+    position:relative;z-index:2;
+    max-width:900px;margin:0 auto;
+    display:flex;flex-direction:column;gap:clamp(2.4rem,6vw,3.6rem);
+  }
+
+  /* ---- HUD strip ---- */
+  .hud{
+    display:flex;flex-wrap:wrap;gap:.75rem 1.25rem;justify-content:space-between;align-items:center;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);
+    border:1px solid var(--edge);border-left:3px solid var(--accent);
+    padding:.6rem .9rem;background:var(--panel);
+  }
+  .hud .rec{color:var(--accent)}
+  .hud .rec b{display:inline-block;width:.55em;height:.55em;background:var(--accent);border-radius:50%;margin-right:.45em;vertical-align:baseline}
+
+  /* ---- marquee ---- */
+  .marquee{display:flex;flex-direction:column;gap:1rem}
+  .eyebrow{
+    margin:0;font-family:var(--mono);font-size:.72rem;font-weight:500;
+    letter-spacing:.22em;text-transform:uppercase;color:var(--cavern);
+  }
+  h1{
+    margin:0;font-family:var(--disp);font-weight:400;
+    font-size:clamp(1.35rem,4.4vw,2rem);line-height:1.25;
+    color:var(--accent);text-wrap:balance;
+    text-shadow:0 2px 0 #7a3a28, 0 3px 12px rgba(217,119,87,.25);
+  }
+  .tagline{margin:0;max-width:60ch;color:var(--ink)}
+  .tagline b{color:var(--spark);font-weight:600}
+
+  .meta{
+    margin:.4rem 0 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));
+    gap:.5rem;border-top:1px solid var(--edge);padding-top:1rem;
+  }
+  .meta div{display:flex;flex-direction:column;gap:.15rem}
+  .meta dt{font-family:var(--mono);font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .meta dd{margin:0;font-size:.9rem}
+
+  /* ---- sections ---- */
+  section{display:flex;flex-direction:column;gap:1.1rem}
+  h2{
+    margin:0;display:flex;align-items:center;gap:.7rem;
+    font-family:var(--mono);font-weight:700;font-size:.92rem;
+    letter-spacing:.16em;text-transform:uppercase;color:var(--ink);text-wrap:balance;
+  }
+  h2 .tick{color:var(--accent);font-size:1rem;letter-spacing:-.1em}
+  h2 .bar{flex:1;height:1px;background:linear-gradient(90deg,var(--edge),transparent)}
+  .note{
+    margin:0;font-family:var(--mono);font-size:.8rem;line-height:1.6;color:var(--muted);
+    border-left:2px solid var(--edge);padding-left:.8rem;
+  }
+
+  code{
+    font-family:var(--mono);font-size:.86em;
+    background:var(--panel-2);border:1px solid var(--edge);
+    padding:.08em .4em;color:var(--spark);
+  }
+
+  /* ---- crates (story materials) ---- */
+  .crates{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;align-items:stretch}
+  .crate{
+    display:flex;flex-direction:column;gap:.7rem;
+    background:var(--panel);border:1px solid var(--edge);
+    padding:1.1rem 1.1rem 1.25rem;position:relative;
+  }
+  .crate::after{content:"";position:absolute;top:0;right:0;border-width:0 14px 14px 0;border-style:solid;border-color:transparent var(--ground) transparent transparent}
+  .badge{
+    width:2.1rem;height:2.1rem;flex:none;display:grid;place-items:center;
+    font-family:var(--disp);font-size:.8rem;color:var(--accent);
+    border:2px solid var(--accent);background:rgba(217,119,87,.08);
+  }
+  .kick{
+    margin:0;font-family:var(--body);font-weight:600;font-size:.95rem;color:var(--spark);
+    letter-spacing:.01em;
+  }
+  .crate p{margin:0;font-size:.9rem;line-height:1.62}
+  .crate .lead{color:var(--ink);font-weight:500}
+  .crate ul{margin:0;padding-left:1.05rem;display:flex;flex-direction:column;gap:.5rem}
+  .crate li{font-size:.87rem;line-height:1.58;color:var(--ink)}
+  .crate li b{color:var(--accent);font-weight:700;font-family:var(--mono);font-size:.82rem;letter-spacing:.03em;margin-right:.15em}
+
+  /* ---- checklist ---- */
+  .check{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;border:1px solid var(--edge);background:var(--panel)}
+  .check li{
+    display:grid;grid-template-columns:auto 1fr;gap:.4rem .9rem;align-items:start;
+    padding:.9rem 1rem;border-top:1px solid var(--edge);
+  }
+  .check li:first-child{border-top:none}
+  .state{
+    font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.12em;
+    color:var(--ok);border:1px solid var(--ok);padding:.2em .5em;white-space:nowrap;
+    margin-top:.15rem;
+  }
+  .ci{margin:0;font-family:var(--mono);font-size:.86rem;font-weight:500;color:var(--ink);line-height:1.5}
+  .cd{margin:.3rem 0 0;font-size:.84rem;line-height:1.56;color:var(--muted)}
+  .cd code{color:var(--link);background:var(--ground)}
+
+  .gauge{
+    display:flex;flex-wrap:wrap;align-items:center;gap:.5rem .9rem;
+    border:1px solid var(--edge);border-left:3px solid var(--ok);
+    background:var(--panel);padding:.7rem 1rem;
+  }
+  .segs{display:flex;gap:4px}
+  .segs i{width:26px;height:12px;background:var(--ok);box-shadow:0 0 8px rgba(104,211,162,.4)}
+  .gauge p{margin:0;font-family:var(--mono);font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .gauge p b{color:var(--ok);font-size:.95rem}
+
+  /* ---- name entry ---- */
+  .nameentry{
+    margin:0;background:var(--panel);border:1px solid var(--edge);
+    padding:1.15rem 1.2rem;
+    font-family:var(--mono);font-size:clamp(.92rem,2.4vw,1.12rem);font-weight:500;
+    line-height:1.5;color:var(--spark);
+  }
+  .cur{display:inline-block;width:.62em;color:var(--accent);margin-left:.1em;transform:translateY(1px)}
+
+  /* ---- footer ---- */
+  footer{display:flex;flex-direction:column;gap:.6rem;border-top:1px solid var(--edge);padding-top:1.4rem}
+  footer p{margin:0;font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+  footer .fine{font-family:var(--body);font-size:.82rem;line-height:1.55;max-width:62ch}
+  a{color:var(--link);text-decoration:none;border-bottom:1px solid rgba(236,154,124,.35)}
+  a:hover{border-bottom-color:var(--link)}
+  a:focus-visible{outline:2px solid var(--link);outline-offset:3px;border-radius:1px}
+
+  .blink,.cur{animation:blink 1.15s steps(1,end) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  @media (max-width:760px){
+    .crates{grid-template-columns:1fr}
+    .check li{grid-template-columns:1fr;gap:.35rem}
+    .state{justify-self:start}
+  }
+  @media (prefers-reduced-motion:reduce){
+    .blink,.cur{animation:none}
+    html{scroll-behavior:auto}
+  }
+</style>
+</head>
+<body>
+
+<div class="scanlines" aria-hidden="true"></div>
+
+<main class="cab">
+
+  <header class="hud">
+    <span>STEP 3 · POC 완성</span>
+    <span class="rec"><b></b><span class="blink">REC</span></span>
+    <span>2026-08-27 · 마감 14:50</span>
+  </header>
+
+  <div class="marquee">
+    <p class="eyebrow">Academy // 13교시 스토리 재료</p>
+    <h1>CURSOR SLUG</h1>
+    <p class="tagline">브라우저에서 도는 Metal&nbsp;Slug풍 픽셀 런앤건. STEP&nbsp;3에서 고른 도구는 <b>Claude&nbsp;Code</b> — PoC 주제는 “완성된 게임의 README를, 사람이 편집하지 않고, 자동 녹화 트레일러가 있는 소개 페이지로 만든다.”</p>
+    <dl class="meta">
+      <div><dt>타임박스</dt><dd>마감 14:50 · 목표 14:45</dd></div>
+      <div><dt>산출물</dt><dd>27초 트레일러 MP4 + 7.7&nbsp;MB 하이라이트 GIF</dd></div>
+      <div><dt>재생성</dt><dd><code>node scripts/record-trailer.mjs</code> · 약 4분</dd></div>
+    </dl>
+  </div>
+
+  <section aria-labelledby="s1">
+    <h2 id="s1"><span class="tick">&#9622;</span> 스토리 재료 3 <span class="bar"></span></h2>
+    <p class="note">13교시(10분)에는 결과물을 다시 만들지 않는다. 오늘 해 보며 겪은 것을 다섯 칸짜리 한 장으로 쓴다 — 그 다섯 칸 중 넷이 아래 셋에서 나온다.</p>
+
+    <div class="crates">
+      <article class="crate">
+        <div class="badge">1</div>
+        <p class="kick">불편했던 장면</p>
+        <p>완성된 HTML5 게임을 GitHub에 올렸는데, README에는 정지 스크린샷 4장뿐이었다. 저장소를 처음 여는 사람은 도트가 예쁜 것만 보고, 실제로 뛰고 쏘고 보스와 싸우는 장면은 상상해야 했다. “플레이 링크는 저 아래 있지만 아무도 안 누르겠지” 싶었다.</p>
+      </article>
+
+      <article class="crate">
+        <div class="badge">2</div>
+        <p class="kick">내가 정한 규칙</p>
+        <p class="lead">촬영용 자동 플레이는 주소에 <code>?demo=1</code> 이 있을 때만 켜지고, 아무 키나 누르면 즉시 일반 플레이로 되돌린다.</p>
+        <ul>
+          <li>보스 체력은 실제 명중과 무관하게 약 8.7초 고정 곡선으로 깎는다 — 봇 실력과 무관하게 트레일러 길이가 일정하도록.</li>
+          <li>한 장면 4초, 장면 전환은 0.5초 와이프, 총 8장면.</li>
+        </ul>
+      </article>
+
+      <article class="crate">
+        <div class="badge">3</div>
+        <p class="kick">해보니 어땠나</p>
+        <ul>
+          <li><b>의외 ①</b> 캔버스 게임은 밖에서 키 입력을 흉내내면 화면이 뚝뚝 끊긴다. 게임 코드 안에 자동 플레이 봇을 심는 게 정답이었고, 덤으로 <code>?demo=1</code> 어트랙트 모드라는 진짜 기능이 생겼다.</li>
+          <li><b>의외 ②</b> 봇 난이도 조절에 세 번 다시 녹화했다. 보스 체력 0.5배는 1초컷, 1.8배는 70초 슬로그 → “고정 시간 곡선”으로 바꾸고서야 예측 가능해졌다.</li>
+          <li><b>아직 못 맡김</b> 봇의 조준·회피는 여전히 들쭉날쭉해서, “보스전답게” 보이는 컷 지점과 페이싱은 사람이 판단했다. GitHub이 커밋된 mp4를 다운로드 파일로만 준다는 것도 직접 부딪혀 알았다(→ GIF로 전환).</li>
+          <li><b>시간</b> 스크린샷을 “움직이는 트레일러”로 바꾸는 수작업(녹화·편집·인코딩)이면 반나절. 지금은 명령 한 줄, 약 4분이면 재생성된다.</li>
+        </ul>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="s2">
+    <h2 id="s2"><span class="tick">&#9622;</span> 제출 직전 점검 <span class="bar"></span></h2>
+    <p class="note">7개 중 5개 이상이면 제출. 막히면 새 기능은 추가하지 않는다 — 한 번 돌린 캡처와 제목 한 줄이면 제출된다.</p>
+
+    <ol class="check">
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">내 환경에서 실제로 돌려 봤다</p>
+          <p class="cd"><code>node scripts/record-trailer.mjs</code> 가 헤드리스 Playwright로 녹화 → PATH의 ffmpeg로 mp4/gif까지 무인 완주. ffmpeg가 없던 PC라 <code>ffmpeg-static</code> 을 PATH에 먼저 설치해야 돎(파일만 넘기면 AI가 안 도는 것은 정상).</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">실제 입력 1개 → 결과 1개를 캡처해 뒀다 (일반화·익명화)</p>
+          <p class="cd">입력: 어트랙트 모드 플레이 세션(webm). 결과: <code>cursor-slug-trailer.mp4</code>(27초) + <code>cursor-slug-hero.gif</code>(7.7&nbsp;MB). 화면에 개인정보·회사명 없음 → 익명화 불필요.</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">결과가 매번 비슷한 형식으로 나온다</p>
+          <p class="cd">항상 1280×720 / H.264·yuv420p / 8장면 × 4초 / 0.5초 와이프 / 약 27초. 장면 순서는 스크립트의 <code>events</code> 배열로 고정.</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">빈 입력·이상한 입력에 안내가 나온다</p>
+          <p class="cd">ffmpeg 미설치 시 즉시 명확한 에러, 스테이지·보스 타임스탬프를 못 잡으면 기본값으로 대체, 240초 하드 타임아웃으로 무한 대기 차단.</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">제출 형태를 정했다 — HTML 페이지</p>
+          <p class="cd">이 문서를 저장소에 <code>academy/index.html</code> 로 커밋 → GitHub Pages가 <code>/academy/</code> 로 렌더링. README의 ‘Academy 스토리 재료’ 버튼이 이 주소로 연결.</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">카드 제목 한 줄이 준비됐다</p>
+          <p class="cd">아래 <b style="color:var(--link)">NAME ENTRY</b> 참고.</p>
+        </div>
+      </li>
+      <li>
+        <span class="state">CLEAR</span>
+        <div>
+          <p class="ci">13교시에 쓸 스토리 재료 3가지를 메모해 뒀다</p>
+          <p class="cd">위 재료 1–3 (불편했던 장면 · 내가 정한 규칙 · 해보니 어땠나).</p>
+        </div>
+      </li>
+    </ol>
+
+    <div class="gauge">
+      <div class="segs"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <p><b>7 / 7</b> &nbsp;·&nbsp; 기준 &#8805; 5 &nbsp;·&nbsp; PASS</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="s3">
+    <h2 id="s3"><span class="tick">&#9622;</span> Name Entry <span class="bar"></span></h2>
+    <p class="note">카드 제목 한 줄 — [직무] · [도구] · [한 줄 가치]</p>
+    <p class="nameentry">게임 개발자 · Claude&nbsp;Code + pagecast 녹화 스킬 · 정적 README 스크린샷을 30초 자동 트레일러로<span class="cur">&#9608;</span></p>
+  </section>
+
+  <footer>
+    <p>CURSOR SLUG &nbsp;·&nbsp; <a href="https://github.com/guyster323/academy_game">저장소</a> &nbsp;·&nbsp; <a href="../">플레이</a> &nbsp;·&nbsp; <a href="../?demo=1">어트랙트 모드</a> &nbsp;·&nbsp; <a href="https://github.com/guyster323/academy_game/blob/main/scripts/record-trailer.mjs">파이프라인</a></p>
+    <p class="fine">이 페이지는 13교시(10분)용 메모다. 결과물을 다시 만들지 않는다 — 오늘 기억이 생생할 때 적어 둔, 다섯 칸 중 넷. 저장소 <code>academy/index.html</code> 에 그대로 들어 있다.</p>
+  </footer>
+
+</main>
+</body>
+</html>

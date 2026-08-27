@@ -132,8 +132,8 @@ python -m http.server 8073
 
 사내 교육 **STEP 3 · PoC 완성** 과제로 진행했습니다. 어트랙트 모드(`?demo=1`)와 자동 트레일러 파이프라인(`scripts/record-trailer.mjs`)이 그 결과물입니다.
 
-[![Academy 스토리 재료](https://img.shields.io/badge/Academy%20스토리%20재료-STEP%203%20PoC-D97757?style=for-the-badge)](https://claude.ai/code/artifact/2f49df96-64ea-437a-9659-10eec49779ba)
+[![Academy 스토리 재료](https://img.shields.io/badge/Academy%20스토리%20재료-STEP%203%20PoC-D97757?style=for-the-badge)](https://guyster323.github.io/academy_game/academy/)
 
-> 13교시 스토리 재료(불편했던 장면 · 정한 규칙 · 해보니 어땠나)와 제출 직전 점검 7항목을 한 장에 정리한 아티팩트입니다.
+> 13교시 스토리 재료(불편했던 장면 · 정한 규칙 · 해보니 어땠나)와 제출 직전 점검 7항목을 한 장에 정리한 페이지입니다 — 저장소 [`academy/index.html`](academy/index.html) 에 포함되어 GitHub Pages로 렌더링됩니다.
 
 **이제 터미널을 닫고, 커서를 전장에 올려보세요.**
